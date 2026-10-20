@@ -675,6 +675,16 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_database_is_recreated() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("index.sqlite");
+        std::fs::write(&database, b"this is not sqlite").unwrap();
+        let index = Index::open(&database, dir.path()).unwrap();
+        assert_eq!(index.schema_version().as_deref(), Some("1"));
+        assert!(std::fs::metadata(&database).unwrap().len() > 0);
+    }
+
+    #[test]
     fn tags_pins_recents_and_order_round_trip() {
         let (_dir, mut index) = setup();
         index

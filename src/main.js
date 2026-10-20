@@ -465,9 +465,11 @@ function selectTreePath(path) {
   state.selected = path;
   for (const row of els.tree.querySelectorAll(".tree-row")) {
     row.classList.toggle("selected", row.dataset.path === path);
-    row.setAttribute(
+  }
+  for (const entry of els.tree.querySelectorAll(".tree-entry")) {
+    entry.setAttribute(
       "aria-selected",
-      row.dataset.path === path ? "true" : "false"
+      entry.dataset.path === path ? "true" : "false"
     );
   }
 }
@@ -553,12 +555,6 @@ function renderNodes(nodes, depth, filtered) {
     row.dataset.parent = parentOf(node.path);
     row.dataset.isDir = node.isDir ? "true" : "false";
     row.dataset.name = node.name;
-    row.setAttribute("role", "treeitem");
-    row.setAttribute("aria-level", String(depth + 1));
-    row.setAttribute(
-      "aria-selected",
-      state.selected === node.path ? "true" : "false"
-    );
     row.style.paddingLeft = `${depth * 14}px`;
     if (state.selected === node.path) row.classList.add("selected");
     row.draggable = !filtered;
@@ -566,9 +562,9 @@ function renderNodes(nodes, depth, filtered) {
     const disclosure = document.createElement("button");
     disclosure.type = "button";
     disclosure.className = "tree-disclosure";
+    disclosure.setAttribute("aria-hidden", "true");
     const expanded = filtered || state.expanded.has(node.path);
     if (node.isDir) {
-      row.setAttribute("aria-expanded", expanded ? "true" : "false");
       disclosure.textContent = expanded ? "▾" : "▸";
       disclosure.setAttribute(
         "aria-label",
@@ -592,6 +588,15 @@ function renderNodes(nodes, depth, filtered) {
     entry.className = "tree-entry";
     entry.title = node.path;
     entry.dataset.path = node.path;
+    entry.setAttribute("role", "treeitem");
+    entry.setAttribute("aria-level", String(depth + 1));
+    entry.setAttribute(
+      "aria-selected",
+      state.selected === node.path ? "true" : "false"
+    );
+    if (node.isDir) {
+      entry.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
     const glyph = document.createElement("span");
     glyph.className = node.isDir ? "folder-glyph" : "file-glyph";
     glyph.setAttribute("aria-hidden", "true");

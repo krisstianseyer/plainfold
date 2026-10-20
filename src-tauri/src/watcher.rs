@@ -37,6 +37,7 @@ pub fn start(
     watcher
         .watch(vault.root(), RecursiveMode::Recursive)
         .map_err(|_| "The file watcher could not watch this vault.".to_string())?;
+    crate::log::path_event("info", "watcher-started", vault.root());
 
     let weak: Weak<AppState> = Arc::downgrade(&state);
     std::thread::spawn(move || {
@@ -79,6 +80,7 @@ fn process_batch(
 ) {
     let mut changed = Vec::new();
     let mut jobs = Vec::new();
+    crate::log::line("debug", &format!("watcher batch: {} paths", batch.len()));
 
     for path in batch {
         if path
@@ -108,6 +110,7 @@ fn process_batch(
             Err(_) => return,
         };
         if inner.vault.as_ref().map(|current| current.root()) != Some(vault.root()) {
+            crate::log::line("warn", "watcher batch ignored: vault changed");
             return;
         }
         if let Some(index) = inner.index.as_mut() {
@@ -144,6 +147,10 @@ fn process_batch(
 
     changed.sort();
     changed.dedup();
+    crate::log::line(
+        "info",
+        &format!("watcher emitting {} changed path(s)", changed.len()),
+    );
     let payload = ChangedPayload {
         paths: changed,
         kind: "changed",

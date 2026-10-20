@@ -126,4 +126,19 @@ mod tests {
         assert!(validate_name(".", true).is_err());
         assert!(validate_name("..", true).is_err());
     }
+
+    #[test]
+    fn windows_reserved_name_variants() {
+        for bad in [
+            "COM1.txt",
+            "lpt9.tar.gz",
+            "NUL.",
+            "aux ",
+            "a/COM2/b.txt",
+        ] {
+            assert!(validate_name(bad, true).is_err(), "{bad} should be rejected");
+        }
+        assert!(validate_name("COM0", true).is_ok());
+        assert!(validate_name(".hidden", true).is_ok());
+    }
 }

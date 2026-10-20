@@ -110,4 +110,26 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read(&file).unwrap(), b"old");
     }
+
+    #[test]
+    fn failed_rename_cleans_up_without_touching_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target-dir");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("keep.txt"), b"keep").unwrap();
+
+        assert!(atomic_write(&target, b"data").is_err());
+        assert!(target.is_dir());
+        assert_eq!(std::fs::read(target.join("keep.txt")).unwrap(), b"keep");
+        let leftovers = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .map(|e| e.file_name().to_string_lossy().starts_with("plainfold-save-"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+    }
 }

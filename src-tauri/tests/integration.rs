@@ -150,6 +150,36 @@ fn delete_moves_to_trash_without_touching_other_files() {
 }
 
 #[test]
+fn symlink_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir(&root).unwrap();
+    let outside = dir.path().join("outside.txt");
+    std::fs::write(&outside, "secret").unwrap();
+    let link = root.join("link.txt");
+
+    #[cfg(windows)]
+    let created = std::os::windows::fs::symlink_file(&outside, &link);
+    #[cfg(unix)]
+    let created = std::os::unix::fs::symlink(&outside, &link);
+
+    if created.is_err() {
+        // Windows requires Developer Mode or elevation for symlinks.
+        eprintln!("symlink test skipped: cannot create symlink");
+        return;
+    }
+
+    let vault = Vault::open(&root).unwrap();
+    assert!(read_file(&vault, "link.txt").is_err());
+    assert!(save_file(&vault, "link.txt", "changed\n", "utf-8", "lf").is_err());
+    assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+
+    delete_item(&vault, "link.txt").unwrap();
+    assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+    assert!(!link.exists());
+}
+
+#[test]
 fn atomic_save_keeps_the_original_when_the_path_is_invalid() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path()).unwrap();

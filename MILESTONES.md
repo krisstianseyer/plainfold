@@ -100,3 +100,14 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 - Linux file or folder names that are not valid UTF-8 are skipped by the tree and index because the IPC and settings layer carries UTF-8 strings.
 - The app has no rename/move feature in v1, by decision.
 - The bundled front-end chunk exceeds Vite's default 500 kB warning because CodeMirror and its language modes are bundled with no code splitting. Nothing is fetched at runtime.
+
+## Validation performed
+
+- Rust: 38 unit tests and 8 integration tests pass on Windows, including symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, and Unicode name search.
+- Front end: 6 tree-helper tests pass; production bundle builds with no unsafe DOM APIs and no external URLs.
+- Real app on Windows: opened a default vault, opened a file in the tree, edited it, saved with Ctrl+S, and confirmed CRLF line endings survived on disk.
+- Real app search: found newly saved text, displayed the correct line number, and exposed the result through the accessibility tree.
+- Real app settings: changed the font family through the settings dialog and confirmed `settings.json` persisted it.
+- Real app watcher: an external edit reloaded a clean open file; an external edit with unsaved changes kept the edits and showed the notice.
+- Real app close behavior: closing with unsaved changes showed the confirmation dialog; cancelling left the app running.
+- Packaging: NSIS installer, install, launch, and uninstall all completed successfully; EXE metadata reports Plainfold and the ICO contains a 16 by 16 frame.

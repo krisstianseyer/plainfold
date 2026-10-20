@@ -328,4 +328,24 @@ mod tests {
         let decoded = decode(&[0xFF, 0xFE, b'a', 0, b'b']);
         assert!(decoded.read_only.is_some());
     }
+
+    #[test]
+    fn bom_only_file_is_editable_and_keeps_the_bom() {
+        let decoded = decode(&[0xEF, 0xBB, 0xBF]);
+        assert!(decoded.read_only.is_none());
+        assert_eq!(decoded.text, "");
+        let bytes = encode(&decoded.text, decoded.encoding, Eol::Lf);
+        assert_eq!(bytes, vec![0xEF, 0xBB, 0xBF]);
+    }
+
+    #[test]
+    fn mixed_line_endings_follow_the_first_style() {
+        let decoded = decode(b"one\r\ntwo\nthree\r\n");
+        assert_eq!(decoded.eol, Eol::Crlf);
+        assert_eq!(decoded.text, "one\ntwo\nthree\n");
+        assert_eq!(
+            encode(&decoded.text, decoded.encoding, decoded.eol),
+            b"one\r\ntwo\r\nthree\r\n"
+        );
+    }
 }

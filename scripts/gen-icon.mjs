@@ -49,12 +49,21 @@ const right = 0.76;
 const top = 0.1;
 const bottom = 0.9;
 const radius = 0.05;
+const border = 0.058;
 fillRoundRect(left, top, right, bottom, radius, ink);
-fillRoundRect(left + 0.035, top + 0.035, right - 0.035, bottom - 0.035, radius * 0.7, paper);
+fillRoundRect(
+  left + border,
+  top + border,
+  right - border,
+  bottom - border,
+  radius * 0.7,
+  paper
+);
 
-// Text cursor: a bar with a small foot, readable at 16 px.
-fillRoundRect(0.487, 0.38, 0.513, 0.68, 0.006, accent);
-fillRoundRect(0.46, 0.67, 0.54, 0.705, 0.008, accent);
+// Text cursor: a bar with a small foot, deliberately heavy so it survives
+// downsampling to 16 by 16 pixels.
+fillRoundRect(0.47, 0.37, 0.53, 0.67, 0.008, accent);
+fillRoundRect(0.435, 0.66, 0.565, 0.705, 0.01, accent);
 
 // Downsample.
 const out = new Uint8Array(OUT * OUT * 4);
