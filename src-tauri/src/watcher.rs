@@ -41,11 +41,7 @@ pub fn start(
 
     let weak: Weak<AppState> = Arc::downgrade(&state);
     std::thread::spawn(move || {
-        loop {
-            let first = match receiver.recv() {
-                Ok(path) => path,
-                Err(_) => break,
-            };
+        while let Ok(first) = receiver.recv() {
             let mut batch: HashSet<PathBuf> = HashSet::new();
             batch.insert(first);
             let deadline = std::time::Instant::now() + Duration::from_millis(250);
@@ -80,7 +76,6 @@ fn process_batch(
 ) {
     let mut changed = Vec::new();
     let mut jobs = Vec::new();
-    crate::log::line("debug", &format!("watcher batch: {} paths", batch.len()));
 
     for path in batch {
         if path
@@ -147,10 +142,6 @@ fn process_batch(
 
     changed.sort();
     changed.dedup();
-    crate::log::line(
-        "info",
-        &format!("watcher emitting {} changed path(s)", changed.len()),
-    );
     let payload = ChangedPayload {
         paths: changed,
         kind: "changed",

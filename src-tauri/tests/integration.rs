@@ -2,6 +2,7 @@
 //! verify the bytes that actually landed on disk.
 
 use std::path::Path;
+use std::process::Command;
 
 use plainfold_lib::encoding::{Eol, TextEncoding};
 use plainfold_lib::index::Index;
@@ -150,33 +151,63 @@ fn delete_moves_to_trash_without_touching_other_files() {
 }
 
 #[test]
-fn symlink_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
+fn directory_link_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir(&root).unwrap();
-    let outside = dir.path().join("outside.txt");
-    std::fs::write(&outside, "secret").unwrap();
-    let link = root.join("link.txt");
+    let outside_dir = dir.path().join("outside");
+    std::fs::create_dir(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("secret.txt"), "secret").unwrap();
+    let link = root.join("link");
 
-    #[cfg(windows)]
-    let created = std::os::windows::fs::symlink_file(&outside, &link);
-    #[cfg(unix)]
-    let created = std::os::unix::fs::symlink(&outside, &link);
-
-    if created.is_err() {
-        // Windows requires Developer Mode or elevation for symlinks.
-        eprintln!("symlink test skipped: cannot create symlink");
-        return;
-    }
+    let created = create_directory_link(&outside_dir, &link);
+    assert!(
+        created,
+        "could not create a directory symlink or junction for the escape test"
+    );
 
     let vault = Vault::open(&root).unwrap();
-    assert!(read_file(&vault, "link.txt").is_err());
-    assert!(save_file(&vault, "link.txt", "changed\n", "utf-8", "lf").is_err());
-    assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+    assert!(read_file(&vault, "link/secret.txt").is_err());
+    assert!(save_file(
+        &vault,
+        "link/secret.txt",
+        "changed\n",
+        "utf-8",
+        "lf"
+    )
+    .is_err());
+    assert_eq!(
+        std::fs::read(outside_dir.join("secret.txt")).unwrap(),
+        b"secret"
+    );
 
-    delete_item(&vault, "link.txt").unwrap();
-    assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+    delete_item(&vault, "link").unwrap();
+    assert_eq!(
+        std::fs::read(outside_dir.join("secret.txt")).unwrap(),
+        b"secret"
+    );
     assert!(!link.exists());
+}
+
+fn create_directory_link(target: &Path, link: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+            return true;
+        }
+        // Directory junctions do not require Developer Mode or elevation.
+        Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
 }
 
 #[test]

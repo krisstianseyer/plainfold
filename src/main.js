@@ -551,6 +551,7 @@ function renderNodes(nodes, depth, filtered) {
   for (const node of nodes) {
     const row = document.createElement("div");
     row.className = "tree-row";
+    row.setAttribute("role", "none");
     row.dataset.path = node.path;
     row.dataset.parent = parentOf(node.path);
     row.dataset.isDir = node.isDir ? "true" : "false";
@@ -559,17 +560,12 @@ function renderNodes(nodes, depth, filtered) {
     if (state.selected === node.path) row.classList.add("selected");
     row.draggable = !filtered;
 
-    const disclosure = document.createElement("button");
-    disclosure.type = "button";
+    const disclosure = document.createElement("span");
     disclosure.className = "tree-disclosure";
     disclosure.setAttribute("aria-hidden", "true");
     const expanded = filtered || state.expanded.has(node.path);
     if (node.isDir) {
       disclosure.textContent = expanded ? "▾" : "▸";
-      disclosure.setAttribute(
-        "aria-label",
-        expanded ? `Collapse ${node.name}` : `Expand ${node.name}`
-      );
       disclosure.addEventListener("click", (event) => {
         event.stopPropagation();
         if (state.expanded.has(node.path)) state.expanded.delete(node.path);
@@ -579,9 +575,7 @@ function renderNodes(nodes, depth, filtered) {
       });
     } else {
       disclosure.classList.add("leaf");
-      disclosure.tabIndex = -1;
     }
-    disclosure.tabIndex = -1;
 
     const entry = document.createElement("button");
     entry.type = "button";

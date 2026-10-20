@@ -388,6 +388,7 @@ select:focus-visible,
   color: var(--faint);
   font-size: 10px;
   line-height: 1;
+  cursor: pointer;
 }
 
 .tree-disclosure.leaf {

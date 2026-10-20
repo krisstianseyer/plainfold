@@ -124,10 +124,12 @@ mod tests {
     fn round_trips_and_clamps() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let mut settings = Settings::default();
-        settings.tab_width = 99;
-        settings.font_size = 1;
-        settings.theme = "dark".into();
+        let settings = Settings {
+            tab_width: 99,
+            font_size: 1,
+            theme: "dark".into(),
+            ..Settings::default()
+        };
         save(&path, &settings).unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.settings.tab_width, 16);

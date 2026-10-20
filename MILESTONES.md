@@ -110,4 +110,8 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 - Real app settings: changed the font family through the settings dialog and confirmed `settings.json` persisted it.
 - Real app watcher: an external edit reloaded a clean open file; an external edit with unsaved changes kept the edits and showed the notice.
 - Real app close behavior: closing with unsaved changes showed the confirmation dialog; cancelling left the app running.
+- Real app organization: pinned and unpinned through the context menu, added tags through the tag dialog, and saw both in the UI.
+- Real app create/delete: created a nested path in one step, rejected an invalid colon name with the plain-language error, and deleted a file to the trash with confirmation.
+- Real app Rescan: reported the correct indexed file count after deleting a file.
 - Packaging: NSIS installer, install, launch, and uninstall all completed successfully; EXE metadata reports Plainfold and the ICO contains a 16 by 16 frame.
+- Static checks: `cargo clippy --all-targets` is clean and `npm audit --omit=dev` reports zero vulnerabilities.

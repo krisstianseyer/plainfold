@@ -43,7 +43,7 @@ pub fn line(level: &str, message: &str) {
             return;
         }
     }
-    eprint!("plainfold: {message}\n");
+    eprintln!("plainfold: {message}");
 }
 
 pub fn path_event(level: &str, event: &str, path: &Path) {

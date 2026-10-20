@@ -104,16 +104,8 @@ impl Index {
                     ON CONFLICT(key) DO NOTHING;",
             )
             .map_err(|_| "The search index could not be created.".to_string())?;
-        let has_folded = {
-            let mut statement = connection
-                .prepare("PRAGMA table_info(files)")
-                .map_err(|_| "The search index could not be prepared.".to_string())?;
-            let names = statement
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| "The search index could not be prepared.".to_string())?;
-            let found = names.flatten().any(|name| name == "name_folded");
-            found
-        };
+        let has_folded = has_folded_column(&connection)
+            .map_err(|_| "The search index could not be prepared.".to_string())?;
         if !has_folded {
             connection
                 .execute(
@@ -569,6 +561,17 @@ fn remove_database_files(database: &Path) {
         name.push(suffix);
         let _ = std::fs::remove_file(PathBuf::from(name));
     }
+}
+
+fn has_folded_column(connection: &Connection) -> rusqlite::Result<bool> {
+    let mut statement = connection.prepare("PRAGMA table_info(files)")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == "name_folded" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn index_database_path(data_dir: &Path, vault_root: &Path) -> PathBuf {
