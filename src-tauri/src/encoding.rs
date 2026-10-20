@@ -8,6 +8,11 @@ pub const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 /// down the WebView or exhaust memory. The file is still read-only.
 pub const MAX_DISPLAY_BYTES: u64 = 8 * 1024 * 1024;
 
+/// Content is indexed only when the file is strictly smaller than 2 MiB.
+pub fn should_index_size(size: u64) -> bool {
+    size < MAX_INDEX_BYTES
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextEncoding {
     Utf8 { bom: bool },
@@ -347,5 +352,12 @@ mod tests {
             encode(&decoded.text, decoded.encoding, decoded.eol),
             b"one\r\ntwo\r\nthree\r\n"
         );
+    }
+
+    #[test]
+    fn index_size_limit_is_two_mib_and_strict() {
+        assert_eq!(MAX_INDEX_BYTES, 2 * 1024 * 1024);
+        assert!(should_index_size(MAX_INDEX_BYTES - 1));
+        assert!(!should_index_size(MAX_INDEX_BYTES));
     }
 }

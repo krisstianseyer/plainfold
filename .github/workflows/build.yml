@@ -63,6 +63,9 @@ jobs:
       - run: npm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri build -- --bundles rpm
+      - run: |
+          dnf install -y ./src-tauri/target/release/bundle/rpm/*.rpm
+          rpm -q plainfold
       - uses: actions/upload-artifact@v4
         with:
           name: plainfold-fedora

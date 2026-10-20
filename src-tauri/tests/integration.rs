@@ -108,24 +108,36 @@ fn index_searches_contents_and_names_after_rescan() {
 }
 
 #[test]
-fn files_at_or_above_two_mb_are_indexed_by_name_only() {
+fn content_index_boundary_is_exactly_two_mib() {
+    const LIMIT: usize = 2 * 1024 * 1024;
+    assert_eq!(MAX_INDEX_BYTES, LIMIT as u64);
+
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir(&root).unwrap();
     let vault = Vault::open(&root).unwrap();
-    create_item(&vault, "", "big.txt", false).unwrap();
+    create_item(&vault, "", "under.txt", false).unwrap();
+    create_item(&vault, "", "at-limit.txt", false).unwrap();
 
-    let mut content = String::from("needle\n");
-    content.push_str(&"a".repeat(MAX_INDEX_BYTES as usize));
-    save_file(&vault, "big.txt", &content, "utf-8", "lf").unwrap();
-    assert!(std::fs::metadata(root.join("big.txt")).unwrap().len() > MAX_INDEX_BYTES);
+    let prefix = "needle\n";
+    let mut under = String::from(prefix);
+    under.push_str(&"a".repeat(LIMIT - 1 - prefix.len()));
+    save_file(&vault, "under.txt", &under, "utf-8", "lf").unwrap();
+    assert_eq!(std::fs::metadata(root.join("under.txt")).unwrap().len(), (LIMIT - 1) as u64);
+
+    let mut at_limit = String::from(prefix);
+    at_limit.push_str(&"a".repeat(LIMIT - prefix.len()));
+    save_file(&vault, "at-limit.txt", &at_limit, "utf-8", "lf").unwrap();
+    assert_eq!(std::fs::metadata(root.join("at-limit.txt")).unwrap().len(), LIMIT as u64);
 
     let mut index = Index::open(&dir.path().join("index.sqlite"), &root).unwrap();
     rescan_index(&mut index, &vault).unwrap();
 
-    assert!(index.search("needle", 20).unwrap().is_empty());
-    let hits = index.search("big", 20).unwrap();
-    assert!(hits.iter().any(|hit| hit.path == "big.txt"));
+    let hits = index.search("needle", 20).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "under.txt");
+    let name_hits = index.search("at-limit", 20).unwrap();
+    assert!(name_hits.iter().any(|hit| hit.path == "at-limit.txt"));
 }
 
 #[test]
@@ -222,10 +234,7 @@ fn links_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
         assert_eq!(std::fs::read(&outside_file).unwrap(), b"file secret");
         assert!(std::fs::symlink_metadata(&file_link).is_err());
     } else {
-        #[cfg(unix)]
         panic!("file symlink could not be created for the escape test");
-        #[cfg(windows)]
-        eprintln!("file symlink case skipped: cannot create a file symlink");
     }
 }
 

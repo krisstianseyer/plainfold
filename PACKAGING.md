@@ -18,11 +18,11 @@ Results:
 - `src-tauri/target/release/bundle/nsis/Plainfold_0.1.0_x64-setup.exe`
 - `src-tauri/target/release/bundle/msi/Plainfold_0.1.0_x64_en-US.msi`
 
-`bundle.targets` is `"all"`, so Tauri produces the formats supported on the host. Windows produces NSIS and MSI. Either satisfies the v1 requirement; use the NSIS installer for the install test.
+`bundle.targets` is `"all"`, so Tauri produces the formats supported on the host. Windows produces NSIS and MSI. Both were install-tested; NSIS remains the default per-user installer for the checklist below.
 
 Install test checklist:
 
-1. Run the installer as a normal user.
+1. Run the NSIS installer as a normal user. The MSI is per-machine and may prompt for elevation.
 2. Confirm the installer shows Plainfold and the page-with-cursor icon.
 3. Launch from the Start menu. The window title is Plainfold.
 4. Confirm the taskbar icon is the page-with-cursor icon.
@@ -92,7 +92,7 @@ Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
 
 - Windows: tests plus NSIS/MSI bundle.
 - Ubuntu 22.04: tests plus `.deb`.
-- Fedora container: tests plus `.rpm`.
+- Fedora container: tests, `.rpm` build, and an RPM install check.
 
 Artifacts are uploaded per job. A release is only complete after the Windows, Debian-family, and Fedora-family install tests above have been performed on real machines or VMs.
 
@@ -102,7 +102,7 @@ This build was verified as follows:
 
 - Windows: NSIS and MSI install, launch, and uninstall passed.
 - Ubuntu 24.04 WSL (Debian family): `npm run tauri build -- --bundles deb` produced the package; `apt` install, `ldd` missing-library check, and removal passed.
-- `.rpm`: `npm run tauri build -- --bundles rpm` invoked `rpmbuild` from the same source; digest, metadata, dependencies, and file list were inspected. Installing it on Fedora remains a CI or VM step.
+- `.rpm`: `npm run tauri build -- --bundles rpm` invoked `rpmbuild` from the same source; digest, metadata, dependencies, and file list were inspected. The Fedora CI job installs the RPM; launching it on a Fedora desktop remains a VM step.
 
 ## Icons
 

@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri::async_runtime::spawn_blocking;
 
-use crate::encoding::MAX_INDEX_BYTES;
+use crate::encoding::should_index_size;
 use crate::index::{index_database_path, Index, SearchHit, TagCount};
 use crate::paths::Vault;
 use crate::settings::{self, Settings};
@@ -253,9 +253,7 @@ fn save_file_impl(
             .next()
             .unwrap_or(path)
             .to_string();
-        let body = if outcome.size < MAX_INDEX_BYTES as i64
-            && (content.len() as u64) < MAX_INDEX_BYTES
-        {
+        let body = if should_index_size(outcome.size as u64) {
             Some(content)
         } else {
             None

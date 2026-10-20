@@ -4,7 +4,7 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 
-use crate::encoding::MAX_INDEX_BYTES;
+use crate::encoding;
 use crate::index::Index;
 use crate::paths::Vault;
 
@@ -213,7 +213,7 @@ fn walk_for_index(
 }
 
 pub fn indexable_body(path: &Path, size: u64) -> Option<String> {
-    if size >= MAX_INDEX_BYTES {
+    if !encoding::should_index_size(size) {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
