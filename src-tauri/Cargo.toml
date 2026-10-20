@@ -1,0 +1,33 @@
+[package]
+name = "plainfold"
+version = "0.1.0"
+description = "Plainfold: a plain-text vault editor"
+authors = ["Plainfold"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "plainfold_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.4", features = [] }
+tauri-plugin-dialog = "=2.8.3"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+notify = "=8.2.0"
+trash = "=5.2.9"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

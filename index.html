@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plainfold</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar">
+        <div class="brand" aria-label="Plainfold">
+          <span class="brand-mark" aria-hidden="true"><span class="brand-cursor"></span></span>
+          <span class="brand-name">Plainfold</span>
+        </div>
+        <div class="toolbar">
+          <button id="open-vault" class="button primary" type="button">Open Vault</button>
+          <div class="search-wrap">
+            <input
+              id="search"
+              class="search-input"
+              type="search"
+              placeholder="Search names and contents"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Search file names and contents"
+              aria-controls="search-results"
+            />
+            <kbd class="search-key">Ctrl F</kbd>
+          </div>
+          <button id="rescan" class="button" type="button" title="Rebuild the search index">Rescan</button>
+          <button id="settings-button" class="button" type="button">Settings</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar" aria-label="Vault navigation">
+          <div class="sidebar-scroll">
+            <section class="side-section">
+              <h2 class="side-title">Pinned</h2>
+              <ul id="pinned-list" class="short-list"></ul>
+            </section>
+            <section class="side-section">
+              <h2 class="side-title">Recent</h2>
+              <ul id="recent-list" class="short-list"></ul>
+            </section>
+            <section class="side-section tree-section">
+              <div class="section-head">
+                <h2 class="side-title">Vault</h2>
+                <div class="tree-actions">
+                  <button id="new-file" class="icon-button" type="button" title="New file">+ File</button>
+                  <button id="new-folder" class="icon-button" type="button" title="New folder">+ Folder</button>
+                </div>
+              </div>
+              <div id="tag-filter" class="tag-filter"></div>
+              <div id="tree" class="tree" role="tree" aria-label="Vault files" aria-multiselectable="false"></div>
+              <p id="tree-empty" class="muted empty-hint" hidden>This vault is empty.</p>
+            </section>
+          </div>
+          <div class="sidebar-footer">
+            <span id="vault-name">No vault open</span>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <div id="search-results" class="search-results" role="dialog" aria-label="Search results" hidden>
+            <div class="results-head">
+              <h2>Search results</h2>
+              <button id="close-results" class="icon-button" type="button">Close</button>
+            </div>
+            <ul id="results-list" class="results-list" role="list"></ul>
+            <p id="results-empty" class="muted" hidden>No matches.</p>
+          </div>
+
+          <div id="empty-state" class="empty-state">
+            <div class="paper" aria-hidden="true"><span class="paper-cursor"></span></div>
+            <h1>Plain text, plain files.</h1>
+            <p>Open a folder as your vault. Every note stays a real file on disk, in the encoding and line endings it already uses.</p>
+            <button id="empty-open" class="button primary" type="button">Open a folder</button>
+          </div>
+
+          <div id="editor-pane" class="editor-pane" hidden>
+            <div class="file-header">
+              <div class="file-title">
+                <strong id="file-name"></strong>
+                <span id="file-path" class="file-path"></span>
+              </div>
+              <div class="file-actions">
+                <span id="file-meta" class="file-meta"></span>
+                <button id="wrap-toggle" class="button small" type="button" aria-pressed="false">Wrap off</button>
+                <button id="save-button" class="button small primary" type="button">Save</button>
+              </div>
+            </div>
+            <div id="file-tags" class="file-tags"></div>
+            <div id="notice" class="notice" role="alert" hidden></div>
+            <div id="editor" class="editor"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar" role="status" aria-live="polite">
+        <span id="status-left">Ready</span>
+        <span id="status-right"></span>
+      </footer>
+    </div>
+
+    <div id="context-menu" class="context-menu" role="menu" hidden></div>
+
+    <dialog id="prompt-dialog" class="dialog" aria-labelledby="prompt-title">
+      <form id="prompt-form" method="dialog">
+        <h2 id="prompt-title">New item</h2>
+        <p id="prompt-copy" class="muted"></p>
+        <label class="field">
+          <span id="prompt-label">Name</span>
+          <input id="prompt-input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <p id="prompt-error" class="form-error" hidden></p>
+        <div class="dialog-actions">
+          <button id="prompt-cancel" class="button" type="button">Cancel</button>
+          <button id="prompt-submit" class="button primary" value="default">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="tags-dialog" class="dialog" aria-labelledby="tags-title">
+      <form id="tags-form" method="dialog">
+        <h2 id="tags-title">Tags</h2>
+        <p class="muted">Separate tags with commas. Tags are stored in the search index, never in the file.</p>
+        <label class="field">
+          <span>Tags</span>
+          <input id="tags-input" type="text" autocomplete="off" spellcheck="false" placeholder="work, reading, idea" />
+        </label>
+        <p id="tags-error" class="form-error" hidden></p>
+        <div class="dialog-actions">
+          <button id="tags-cancel" class="button" type="button">Cancel</button>
+          <button id="tags-submit" class="button primary" value="default">Save tags</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="dialog settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form" method="dialog">
+        <h2 id="settings-title">Settings</h2>
+        <div class="settings-grid">
+          <label class="field">
+            <span>Theme</span>
+            <select id="setting-theme">
+              <option value="system">Follow the system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Font family</span>
+            <input id="setting-font-family" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>Font size</span>
+            <input id="setting-font-size" type="number" min="8" max="48" step="1" />
+          </label>
+          <label class="field">
+            <span>Tab width</span>
+            <input id="setting-tab-width" type="number" min="1" max="16" step="1" />
+          </label>
+          <label class="field">
+            <span>Default sort order</span>
+            <select id="setting-sort">
+              <option value="name">Name</option>
+              <option value="modified">Modified date</option>
+              <option value="size">Size</option>
+            </select>
+          </label>
+          <label class="field wide">
+            <span>Default vault folder</span>
+            <div class="inline-field">
+              <input id="setting-default-vault" type="text" readonly />
+              <button id="choose-default-vault" class="button" type="button">Choose</button>
+              <button id="use-current-vault" class="button" type="button">Use current</button>
+              <button id="clear-default-vault" class="button" type="button">Clear</button>
+            </div>
+          </label>
+        </div>
+        <p id="settings-error" class="form-error" hidden></p>
+        <div class="dialog-actions">
+          <button id="settings-cancel" class="button" type="button">Cancel</button>
+          <button id="settings-submit" class="button primary" value="default">Save settings</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
