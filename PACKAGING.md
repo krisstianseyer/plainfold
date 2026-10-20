@@ -98,6 +98,12 @@ Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
 
 Artifacts are uploaded per job. A release is only complete after the Windows, Debian-family, and Fedora-family install tests above have been performed on real machines or VMs.
 
+Verification performed for this build:
+
+- Windows: NSIS install, launch, and uninstall passed.
+- Ubuntu 24.04 WSL (Debian family): `.deb` built, installed with `apt`, `ldd` reported no missing libraries, and removal succeeded.
+- `.rpm` built from the same source with `rpmbuild`; metadata, dependencies, and file list were inspected. Installing it on Fedora remains a CI or VM step.
+
 ## Icons
 
 The master icon is `assets/icon-master.png`. Regenerate all platform icons with:

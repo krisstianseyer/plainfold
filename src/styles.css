@@ -379,6 +379,9 @@ select:focus-visible,
 }
 
 .tree-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 22px;
   flex: 0 0 18px;

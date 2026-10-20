@@ -73,8 +73,8 @@ The build follows the milestone order in `instructions.md` section 8. All milest
 ## Milestone 9: packaging verification
 
 - Windows release build, NSIS installer, silent install, launch, and uninstall were verified locally; see `PACKAGING.md`.
-- Debian-family and Fedora-family packages are built by the CI matrix on the respective distributions. Cross-building `.deb`/`.rpm` from Windows is not supported by Tauri.
-- An install/launch test on each family remains an owner or CI runner step because this workspace is Windows-only.
+- Ubuntu 24.04 (Debian family, WSL): `.deb` built with Tauri, installed with `apt`, passed an `ldd` missing-library check, and removed cleanly.
+- `.rpm` built from the same source with `rpmbuild` on Ubuntu; RPM metadata and dependencies were inspected. Installation on Fedora remains a CI/VM step.
 
 ## Section 10 decisions: status
 
@@ -114,4 +114,5 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 - Real app create/delete: created a nested path in one step, rejected an invalid colon name with the plain-language error, and deleted a file to the trash with confirmation.
 - Real app Rescan: reported the correct indexed file count after deleting a file.
 - Packaging: NSIS installer, install, launch, and uninstall all completed successfully; EXE metadata reports Plainfold and the ICO contains a 16 by 16 frame.
+- Linux packaging: `.deb` install/remove and library resolution verified on Ubuntu 24.04; `.rpm` artifact built and inspected.
 - Static checks: `cargo clippy --all-targets` is clean and `npm audit --omit=dev` reports zero vulnerabilities.

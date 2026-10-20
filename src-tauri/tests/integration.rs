@@ -2,6 +2,7 @@
 //! verify the bytes that actually landed on disk.
 
 use std::path::Path;
+#[cfg(windows)]
 use std::process::Command;
 
 use plainfold_lib::encoding::{Eol, TextEncoding};
@@ -186,7 +187,22 @@ fn directory_link_outside_the_vault_cannot_be_read_saved_or_followed_by_delete()
         std::fs::read(outside_dir.join("secret.txt")).unwrap(),
         b"secret"
     );
-    assert!(!link.exists());
+    assert!(std::fs::symlink_metadata(&link).is_err());
+
+    // File links are a separate escape shape from directory links.
+    let outside_file = dir.path().join("outside-file.txt");
+    std::fs::write(&outside_file, "file secret").unwrap();
+    let file_link = root.join("file-link.txt");
+    if create_file_link(&outside_file, &file_link) {
+        assert!(read_file(&vault, "file-link.txt").is_err());
+        assert!(save_file(&vault, "file-link.txt", "changed\n", "utf-8", "lf").is_err());
+        assert_eq!(std::fs::read(&outside_file).unwrap(), b"file secret");
+        delete_item(&vault, "file-link.txt").unwrap();
+        assert_eq!(std::fs::read(&outside_file).unwrap(), b"file secret");
+        assert!(std::fs::symlink_metadata(&file_link).is_err());
+    } else {
+        eprintln!("file symlink case skipped: cannot create a file symlink");
+    }
 }
 
 fn create_directory_link(target: &Path, link: &Path) -> bool {
@@ -203,6 +219,17 @@ fn create_directory_link(target: &Path, link: &Path) -> bool {
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+fn create_file_link(target: &Path, link: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
     }
     #[cfg(unix)]
     {
