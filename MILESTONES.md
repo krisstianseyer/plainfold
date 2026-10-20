@@ -1,6 +1,6 @@
 # Milestones and implementation notes
 
-The build follows the milestone order in `instructions.md` section 8. All milestones are implemented in this repository. Packaging verification is split between the Windows build performed here and the Linux CI workflow in `.github/workflows/build.yml`.
+The build follows the milestone order in `instructions.md` section 8. All milestones are implemented in this repository. Packaging verification combines local Windows builds, a local Ubuntu 24.04 WSL build, and the Linux CI workflow in `.github/workflows/build.yml`.
 
 ## Milestone 1: window, identity, empty state, installers
 
@@ -95,7 +95,7 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 
 ## Known limitations
 
-- Packaging is verified on Windows here. Linux packages are configured and built by CI but were not installed on a Debian or Fedora machine in this workspace.
+- Windows and Debian-family installs are verified locally. Fedora-family installation has not been performed in this workspace; the `.rpm` was built and inspected, and Fedora install remains a CI or VM step.
 - Search is case-insensitive through SQLite `LIKE` for names, which folds ASCII case; non-ASCII name casing relies on SQLite's behavior. Contents use FTS5 Unicode case folding.
 - Linux file or folder names that are not valid UTF-8 are skipped by the tree and index because the IPC and settings layer carries UTF-8 strings.
 - The app has no rename/move feature in v1, by decision.
@@ -103,16 +103,18 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 
 ## Validation performed
 
-- Rust: 38 unit tests and 8 integration tests pass on Windows, including symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, and Unicode name search.
+- Rust: 38 unit tests and 9 integration tests pass on Windows, including symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, Unicode name search, and the 2 MB content-index limit.
 - Front end: 6 tree-helper tests pass; production bundle builds with no unsafe DOM APIs and no external URLs.
 - Real app on Windows: opened a default vault, opened a file in the tree, edited it, saved with Ctrl+S, and confirmed CRLF line endings survived on disk.
 - Real app search: found newly saved text, displayed the correct line number, and exposed the result through the accessibility tree.
 - Real app settings: changed the font family through the settings dialog and confirmed `settings.json` persisted it.
 - Real app watcher: an external edit reloaded a clean open file; an external edit with unsaved changes kept the edits and showed the notice.
 - Real app close behavior: closing with unsaved changes showed the confirmation dialog; cancelling left the app running.
+- Real app unsaved switching: selecting another file while dirty showed the confirmation dialog; cancelling kept the dirty file open.
+- Real app size limit: a 6 MB file opened read-only, showed the 5 MB notice, and disabled Save.
 - Real app organization: pinned and unpinned through the context menu, added tags through the tag dialog, and saw both in the UI.
 - Real app create/delete: created a nested path in one step, rejected an invalid colon name with the plain-language error, and deleted a file to the trash with confirmation.
 - Real app Rescan: reported the correct indexed file count after deleting a file.
-- Packaging: NSIS installer, install, launch, and uninstall all completed successfully; EXE metadata reports Plainfold and the ICO contains a 16 by 16 frame.
-- Linux packaging: `.deb` install/remove and library resolution verified on Ubuntu 24.04; `.rpm` artifact built and inspected.
+- Packaging: both NSIS and MSI installers completed install, launch, and uninstall; EXE metadata reports Plainfold and the ICO contains a 16 by 16 frame.
+- Linux packaging: `.deb` install/remove and library resolution verified on Ubuntu 24.04; `.rpm` artifact built, digest-checked, and inspected.
 - Static checks: `cargo clippy --all-targets` is clean and `npm audit --omit=dev` reports zero vulnerabilities.

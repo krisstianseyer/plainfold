@@ -5,7 +5,7 @@ use std::path::Path;
 #[cfg(windows)]
 use std::process::Command;
 
-use plainfold_lib::encoding::{Eol, TextEncoding};
+use plainfold_lib::encoding::{Eol, TextEncoding, MAX_INDEX_BYTES};
 use plainfold_lib::index::Index;
 use plainfold_lib::tree::{build_tree, rescan_index, SortOrder};
 use plainfold_lib::vault::{create_item, delete_item, read_file, save_file};
@@ -108,6 +108,27 @@ fn index_searches_contents_and_names_after_rescan() {
 }
 
 #[test]
+fn files_at_or_above_two_mb_are_indexed_by_name_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir(&root).unwrap();
+    let vault = Vault::open(&root).unwrap();
+    create_item(&vault, "", "big.txt", false).unwrap();
+
+    let mut content = String::from("needle\n");
+    content.push_str(&"a".repeat(MAX_INDEX_BYTES as usize));
+    save_file(&vault, "big.txt", &content, "utf-8", "lf").unwrap();
+    assert!(std::fs::metadata(root.join("big.txt")).unwrap().len() > MAX_INDEX_BYTES);
+
+    let mut index = Index::open(&dir.path().join("index.sqlite"), &root).unwrap();
+    rescan_index(&mut index, &vault).unwrap();
+
+    assert!(index.search("needle", 20).unwrap().is_empty());
+    let hits = index.search("big", 20).unwrap();
+    assert!(hits.iter().any(|hit| hit.path == "big.txt"));
+}
+
+#[test]
 fn tree_lists_folders_before_files() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path()).unwrap();
@@ -152,7 +173,7 @@ fn delete_moves_to_trash_without_touching_other_files() {
 }
 
 #[test]
-fn directory_link_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
+fn links_outside_the_vault_cannot_be_read_saved_or_followed_by_delete() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir(&root).unwrap();
@@ -201,6 +222,9 @@ fn directory_link_outside_the_vault_cannot_be_read_saved_or_followed_by_delete()
         assert_eq!(std::fs::read(&outside_file).unwrap(), b"file secret");
         assert!(std::fs::symlink_metadata(&file_link).is_err());
     } else {
+        #[cfg(unix)]
+        panic!("file symlink could not be created for the escape test");
+        #[cfg(windows)]
         eprintln!("file symlink case skipped: cannot create a file symlink");
     }
 }

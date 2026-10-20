@@ -20,8 +20,6 @@ Results:
 
 `bundle.targets` is `"all"`, so Tauri produces the formats supported on the host. Windows produces NSIS and MSI. Either satisfies the v1 requirement; use the NSIS installer for the install test.
 
-Verification performed for this build: the NSIS installer completed silently, the installed app launched with the Plainfold window title, and the uninstaller removed the install directory.
-
 Install test checklist:
 
 1. Run the installer as a normal user.
@@ -98,11 +96,13 @@ Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
 
 Artifacts are uploaded per job. A release is only complete after the Windows, Debian-family, and Fedora-family install tests above have been performed on real machines or VMs.
 
-Verification performed for this build:
+## Verification performed
 
-- Windows: NSIS install, launch, and uninstall passed.
-- Ubuntu 24.04 WSL (Debian family): `.deb` built, installed with `apt`, `ldd` reported no missing libraries, and removal succeeded.
-- `.rpm` built from the same source with `rpmbuild`; metadata, dependencies, and file list were inspected. Installing it on Fedora remains a CI or VM step.
+This build was verified as follows:
+
+- Windows: NSIS and MSI install, launch, and uninstall passed.
+- Ubuntu 24.04 WSL (Debian family): `npm run tauri build -- --bundles deb` produced the package; `apt` install, `ldd` missing-library check, and removal passed.
+- `.rpm`: `npm run tauri build -- --bundles rpm` invoked `rpmbuild` from the same source; digest, metadata, dependencies, and file list were inspected. Installing it on Fedora remains a CI or VM step.
 
 ## Icons
 
