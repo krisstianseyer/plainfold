@@ -1,6 +1,6 @@
 {
   "name": "plainfold",
-  "version": "0.1.0",
+  "version": "0.1.20",
   "private": true,
   "description": "Plainfold: a plain-text vault editor",
   "type": "module",
@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "icon": "node scripts/gen-icon.mjs && tauri icon assets/icon-master.png -o src-tauri/icons",
+    "version:bump": "node scripts/bump-version.mjs",
     "test": "node --test tests/frontend/*.test.mjs"
   },
   "dependencies": {

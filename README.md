@@ -4,9 +4,11 @@ Plainfold is a desktop app for Windows and Linux that edits plain text files in 
 
 ## Status
 
+GitHub repository: coming soon.
+
 The v1 feature set in `instructions.md` is implemented:
 
-- Vault tree with folders first, name/modified/size sort, pins, recents, tags, and drag-to-order.
+- Vault tree with folders first, name/modified/size sort, one-click alphabetical sort, pins, recents, tags, drag-to-order, and drag-to-move between folders.
 - Create nested files and folders, with full name validation, and move items to the operating system trash.
 - CodeMirror 6 editing with extension-based syntax highlighting only.
 - UTF-8 (with optional BOM) and BOM-marked UTF-16 LE/BE, preserving encoding, BOM, and CRLF/LF on save.
@@ -14,7 +16,22 @@ The v1 feature set in `instructions.md` is implemented:
 - FTS5 search over names and contents, with line numbers and click-to-line results.
 - Settings in the OS config folder, written atomically, with safe fallback on corruption.
 - A file watcher that reloads clean files and preserves unsaved edits with a notice.
+- Unsaved-change prompts offer Save, Discard, and Cancel for switching files, changing vaults, deleting, and closing.
+- Autosave modes: off, after idle, or fixed interval. Defaults: off, idle 20 seconds, interval 120 seconds. Autosave runs only while the open file has unsaved edits.
+- Compressed revisions stored in the vault's hidden `.revisions` folder; restore from the file context menu. Retention uses Grandfather-Father-Son rotation with configurable hourly, daily, weekly, monthly, and yearly tiers.
+- Non-text files (images, audio, video, PDF, Office, Photoshop, archives, executables) open in the OS default app. Text and script formats stay in Plainfold.
+- Pinned and Recent context actions: open, pin/unpin, remove from Recent, reveal in the vault tree, tags, and move to the vault root. Settings control how many entries each section shows.
+- Vault tree filter for partial names, paths, or extensions, with `*` and `?` wildcards; matching folders keep their contents visible.
+- Resizable sidebar pane; drag the divider, use arrow keys, or double-click to reset.
+- Plain-text links: `[[vault-relative/path]]`; Ctrl+click (Cmd+click on macOS) opens the linked file.
+- App version in the status bar and a GitHub repository placeholder.
 - No framework on the front end; CodeMirror is the only editor dependency.
+
+Desktop shortcuts:
+
+- Windows MSI always creates Start Menu and Desktop shortcuts.
+- Windows NSIS always creates the Start Menu shortcut; its default-checked finish-page option creates the Desktop shortcut.
+- Linux packages install the application-menu entry. On first launch, Plainfold asks once whether to create a per-user `.desktop` shortcut on the Desktop.
 
 ## Development
 
@@ -34,6 +51,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run build                             # production front-end bundle
 ```
 
+Versioning: after each change, run `npm run version:bump`. Default is a patch bump; `npm run version:bump -- minor`, `npm run version:bump -- major`, and explicit targets such as `npm run version:bump -- 0.1.4` are available. The script updates `package.json`, `package-lock.json`, `Cargo.toml`, `Cargo.lock`, and `tauri.conf.json` together.
+
 ## Build installers
 
 ```sh
@@ -47,7 +66,8 @@ The bundle targets are `"all"`, so each platform builds the installers it suppor
 - Settings: the OS config folder, `settings.json`.
 - Search index: the OS app data folder, one SQLite file per vault keyed by a stable hash of the vault's full path.
 - Logs: the OS app data folder, `logs/plainfold.log`. Logs contain paths, error codes, and timings, never file contents.
-- Vaults: the folder the user selected. Plainfold creates no hidden files or folders in a vault, except a short-lived `plainfold-save-*` temporary file during an atomic save.
+- Revisions: `vault/.revisions/<file path>/<UTC timestamp>.gz`. Hidden on Windows; dot-hidden on Linux. Excluded from tree, search, and watcher.
+- Vaults: the folder the user selected. Plainfold creates no hidden files or folders in a vault, except `.revisions` and a short-lived `plainfold-save-*` temporary file during an atomic save.
 
 The index is a cache for file contents and organization data (tags, pins, recents, custom order). Deleting it never loses note content.
 
@@ -67,7 +87,10 @@ Rust, pinned exactly in `src-tauri/Cargo.toml`:
 - `tauri-plugin-dialog`: native dialogs.
 - `serde`, `serde_json`: settings and IPC types.
 - `rusqlite` with bundled SQLite: FTS5 index, no system SQLite dependency.
+- `chrono`: revision timestamps.
+- `flate2`: gzip-compressed revision snapshots.
 - `notify`: file watching.
+- `opener`: launch non-text files in the OS default application.
 - `trash`: move files and folders to the OS trash.
 - `tempfile` (dev only): isolated test vaults.
 

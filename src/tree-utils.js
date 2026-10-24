@@ -12,6 +12,10 @@ export function parentOf(path) {
   return index === -1 ? "" : path.slice(0, index);
 }
 
+export function isPathWithin(path, ancestor) {
+  return path === ancestor || path.startsWith(`${ancestor}/`);
+}
+
 export function flattenTree(tree) {
   const out = [];
   const walk = (nodes) => {
@@ -47,8 +51,48 @@ export function filterTree(tree, paths) {
   return walk(tree);
 }
 
-export function formatBytes(size) {
-  if (!Number.isFinite(size) || size < 0) return "";
+function globToRegExp(pattern) {
+  let source = "^";
+  for (const char of pattern) {
+    if (char === "*") source += ".*";
+    else if (char === "?") source += ".";
+    else source += char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`, "i");
+}
+
+export function matchesTreeQuery(node, query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  if (/[*?]/.test(needle)) {
+    const pattern = globToRegExp(needle);
+    return pattern.test(node.name.toLowerCase()) || pattern.test(node.path.toLowerCase());
+  }
+  return (
+    node.name.toLowerCase().includes(needle) ||
+    node.path.toLowerCase().includes(needle)
+  );
+}
+
+export function filterTreeByQuery(tree, query) {
+  if (!query.trim()) return tree;
+  const walk = (nodes) =>
+    nodes
+      .map((node) => {
+        if (node.isDir) {
+          if (matchesTreeQuery(node, query)) {
+            return { ...node, children: node.children ?? [] };
+          }
+          const children = walk(node.children ?? []);
+          return children.length ? { ...node, children } : null;
+        }
+        return matchesTreeQuery(node, query) ? { ...node, children: [] } : null;
+      })
+      .filter(Boolean);
+  return walk(tree);
+}
+
+export function formatBytes(size) {  if (!Number.isFinite(size) || size < 0) return "";
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
@@ -74,4 +118,21 @@ export function folderPaths(tree) {
   return flattenTree(tree)
     .filter((node) => node.isDir)
     .map((node) => node.path);
+}
+
+/**
+ * Decide whether an on-disk event means the open file really changed.
+ *
+ * File watchers fire for metadata touches too: sync clients, backup tools and
+ * editors that rewrite a file just for reading it all produce events even
+ * though the text is identical. Only a different text counts.
+ *
+ * Returns true when the file should be treated as changed. A null reading
+ * means the file could not be read as text (removed, binary, unreadable), so
+ * the event is honoured rather than silently dropped.
+ */
+export function contentChangedSince(diskText, knownText) {
+  if (diskText === null || diskText === undefined) return true;
+  if (knownText === null || knownText === undefined) return true;
+  return diskText !== knownText;
 }

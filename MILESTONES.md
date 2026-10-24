@@ -13,7 +13,7 @@ The build follows the milestone order in `instructions.md` section 8. All milest
 
 ## Milestone 2: open a vault and show the tree
 
-- Native folder picker, canonical vault root, no hidden files created.
+- Native folder picker, canonical vault root. `.revisions` is the only app-created hidden folder and is excluded from the tree.
 - Tree lists folders before files; name sort is case-insensitive.
 - Default sort can be name, modified (newest first), or size (smallest first).
 - Custom drag order is stored per folder in the index and takes precedence within each group.
@@ -59,7 +59,7 @@ The build follows the milestone order in `instructions.md` section 8. All milest
 ## Milestone 7: organization
 
 - Tags live only in the index and are shown in the file header and as tree filters.
-- Pins are shown above the tree; recent files are the 20 most recent opens.
+- Pins are shown above the tree; recent files are the most recent opens. Settings default to 5 pinned and 5 recent entries, configurable from 1-100.
 - Custom order is drag-and-drop within a folder only. Cross-folder moves are not implemented (see decision 3).
 - Index schema includes an unused `links` table so double-bracket links can be added later without a data migration.
 
@@ -93,9 +93,29 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 | 9 | Quick switcher and graph | Out of v1 | not implemented |
 | 10 | Custom sort interaction | Drag and drop within a folder | `src/main.js` |
 
+## Desktop shortcuts and macOS scope
+
+- macOS is deferred as a nice-to-have. The stack is portable, but there is no macOS build, signing, or notarization in this release.
+- Windows MSI always creates Start Menu and Desktop shortcuts. NSIS always creates the Start Menu shortcut and offers a default-checked Desktop shortcut on its finish page.
+- Linux packages install the application-menu entry. On first launch, the app offers once to create a per-user `.desktop` shortcut on the Desktop; the choice is recorded in `settings.json`.
+- The Linux shortcut writes only to the user's XDG Desktop folder. No package post-install script or root access is used.
+
+## Autosave and revisions
+
+- Autosave modes: off (default), after idle (default 20s), and fixed interval (default 120s, minimum 120s). Autosave runs only while the current file is dirty.
+- Revisions live in `vault/.revisions/<relative file path>/<UTC timestamp>.gz`.
+- Snapshots are gzip-compressed full copies of the previous on-disk bytes, captured before a save replaces them.
+- Retention uses Grandfather-Father-Son rotation. Defaults: 24 hourly, 7 daily, 4 weekly, 12 monthly, 100 yearly. Each tier is a setting from 0-1000; 0 disables that tier.
+- Buckets use local time; weeks are ISO weeks. Each tier keeps the newest snapshot in each of its N most recent active buckets, and tiers are unioned, so one snapshot can satisfy several tiers.
+- Rotation runs after each capture. Disabling every tier stops new revisions.
+- File context menu: “Show revisions…”. Restoring captures the current file as a revision first, then writes the chosen snapshot.
+- `.revisions` is excluded from the tree, search index, watcher, moves, and deletes. The app refuses to create or target that name.
+- Revision paths are canonicalized and rejected if they resolve outside the vault. Restore is capped at 5 MB decompressed.
+
 ## Known limitations
 
 - Windows and Debian-family installs are verified locally. Fedora-family installation runs in CI, but a Fedora desktop launch remains a VM step.
+- The local `.deb` and `.rpm` artifacts predate the Linux desktop-shortcut change. Rebuild them and verify the first-run prompt in a real desktop session before release.
 - Search is case-insensitive through SQLite `LIKE` for names, which folds ASCII case; non-ASCII name casing relies on SQLite's behavior. Contents use FTS5 Unicode case folding.
 - Linux file or folder names that are not valid UTF-8 are skipped by the tree and index because the IPC and settings layer carries UTF-8 strings.
 - The app has no rename/move feature in v1, by decision.
@@ -103,8 +123,10 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 
 ## Validation performed
 
-- Rust: 39 unit tests and 9 integration tests pass on Windows, including symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, Unicode name search, and the exact 2 MiB content-index boundary.
-- Front end: 6 tree-helper tests pass; production bundle builds with no unsafe DOM APIs and no external URLs.
+- Rust: 55 unit tests and 9 integration tests pass on Windows; 57 unit tests and 9 integration tests pass on Ubuntu 24.04 WSL, including Linux XDG desktop-shortcut parsing and file creation. Coverage includes symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, Unicode name search, drag-reorder persistence, move/index migration, GFS revision capture/restore/rotation, and the exact 2 MiB content-index boundary.
+- Clippy is clean with `-D warnings` on Windows and Linux.
+- Front end: 11 tree-helper and link tests pass; production bundle builds with no unsafe DOM APIs and no external URLs.
+- Windows NSIS installer was rebuilt after the desktop-shortcut changes. The NSIS finish-page Desktop shortcut option is checked by default.
 - Real app on Windows: opened a default vault, opened a file in the tree, edited it, saved with Ctrl+S, and confirmed CRLF line endings survived on disk.
 - Real app search: found newly saved text, displayed the correct line number, and exposed the result through the accessibility tree.
 - Real app settings: changed the font family through the settings dialog and confirmed `settings.json` persisted it.

@@ -1,4 +1,5 @@
 use crate::errors::{AppError, AppResult};
+use crate::paths::REVISIONS_DIR;
 
 /// Characters that are never allowed in a created file or folder name.
 const FORBIDDEN: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
@@ -62,6 +63,11 @@ fn validate_segment(segment: &str, windows: bool) -> AppResult<()> {
     if segment.chars().any(|c| c.is_control()) {
         return Err(AppError::new("Names cannot contain control characters."));
     }
+    if segment.eq_ignore_ascii_case(REVISIONS_DIR) {
+        return Err(AppError::new(
+            "That name is reserved for revision history.",
+        ));
+    }
 
     if windows {
         if segment.ends_with('.') || segment.ends_with(' ') {
@@ -117,6 +123,12 @@ mod tests {
         assert!(validate_name("trailing ", true).is_err());
         assert!(validate_name("CON", false).is_ok());
         assert!(validate_name("trailing.", false).is_ok());
+    }
+
+    #[test]
+    fn rejects_revisions_folder_name() {
+        assert!(validate_name(".revisions", true).is_err());
+        assert!(validate_name("notes/.revisions", true).is_err());
     }
 
     #[test]

@@ -1,21 +1,26 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri::async_runtime::spawn_blocking;
 
+use crate::desktop::{self, DesktopShortcutStatus};
 use crate::encoding::should_index_size;
 use crate::index::{index_database_path, Index, SearchHit, TagCount};
 use crate::paths::Vault;
 use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::tree::{self, SortOrder, TreeNode};
+use crate::undo::{self, UndoAction, UndoState};
 use crate::vault::{
     self, CreatedItem, FileRead, SaveOutcome,
 };
 use crate::watcher;
+
+/// How long deleted items stay available for Undo.
+const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +32,7 @@ pub struct VaultInfo {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub version: String,
     pub settings: Settings,
     pub vault: Option<VaultInfo>,
     pub tree: Vec<TreeNode>,
@@ -81,6 +87,7 @@ pub fn bootstrap(
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
     Ok(Snapshot {
+        version: env!("CARGO_PKG_VERSION").to_string(),
         settings: inner.settings.clone(),
         vault: None,
         tree: Vec::new(),
@@ -146,11 +153,16 @@ fn open_vault_impl(
     inner.index_notice = index_notice;
     inner.vault = Some(vault.clone());
     inner.index = index;
+    inner.undo.reset();
+    let backup = state.undo_backup_dir(vault.root());
+    undo::prune(&backup, UNDO_WINDOW);
+    inner.undo_backup_dir = Some(backup);
 
     let sort = SortOrder::parse(&inner.settings.default_sort);
     let tree = tree::build_tree(&vault, sort, inner.index.as_ref());
 
     Ok(Snapshot {
+        version: env!("CARGO_PKG_VERSION").to_string(),
         settings: inner.settings.clone(),
         vault: Some(VaultInfo {
             path: vault.root().to_string_lossy().to_string(),
@@ -216,6 +228,94 @@ fn read_file_impl(state: &Arc<AppState>, path: &str) -> Result<FileRead, String>
 }
 
 #[tauri::command]
+pub fn open_external(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<(), String> {
+    let absolute = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        let vault = inner
+            .vault
+            .as_ref()
+            .ok_or_else(|| "Open a vault first.".to_string())?;
+        vault
+            .resolve_existing(&path)
+            .map_err(|error| error.to_string())?
+    };
+    let metadata =
+        std::fs::metadata(&absolute).map_err(|_| "The file no longer exists.".to_string())?;
+    if !metadata.is_file() {
+        return Err("That is a folder, not a file.".to_string());
+    }
+    opener::open(&absolute)
+        .map_err(|_| "The file could not be opened in its default app.".to_string())
+}
+
+#[tauri::command]
+pub async fn list_revisions(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<Vec<crate::revisions::RevisionInfo>, String> {
+    let state: Arc<AppState> = (*state).clone();
+    spawn_blocking(move || list_revisions_impl(&state, &path))
+        .await
+        .map_err(|_| "The operation could not be completed.".to_string())?
+}
+
+fn list_revisions_impl(
+    state: &Arc<AppState>,
+    path: &str,
+) -> Result<Vec<crate::revisions::RevisionInfo>, String> {
+    let inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let vault = inner
+        .vault
+        .as_ref()
+        .ok_or_else(|| "Open a vault first.".to_string())?;
+    vault
+        .resolve_existing(path)
+        .map_err(|error| error.to_string())?;
+    crate::revisions::list(vault, path)
+}
+
+#[tauri::command]
+pub async fn restore_revision(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    id: String,
+) -> Result<(), String> {
+    let state: Arc<AppState> = (*state).clone();
+    spawn_blocking(move || restore_revision_impl(&state, &path, &id))
+        .await
+        .map_err(|_| "The operation could not be completed.".to_string())?
+}
+
+fn restore_revision_impl(
+    state: &Arc<AppState>,
+    path: &str,
+    id: &str,
+) -> Result<(), String> {
+    let (vault, retention) = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        let vault = inner
+            .vault
+            .as_ref()
+            .ok_or_else(|| "Open a vault first.".to_string())?
+            .clone();
+        (vault, inner.settings.retention())
+    };
+    crate::revisions::restore(&vault, path, id, &retention)
+}
+
+#[tauri::command]
 pub async fn save_file(
     state: State<'_, Arc<AppState>>,
     path: String,
@@ -245,8 +345,40 @@ fn save_file_impl(
         .as_ref()
         .ok_or_else(|| "Open a vault first.".to_string())?
         .clone();
-    let outcome = vault::save_file(&vault, path, content, encoding, eol)
-        .map_err(|error| error.to_string())?;
+    // Consecutive saves of one file collapse into a single step, so Undo
+    // goes back to the text the file had before the editing session.
+    let pending = inner
+        .undo
+        .peek_undo()
+        .and_then(|(_, action)| match action {
+            UndoAction::Save {
+                path: last, content, ..
+            } if last == path => Some(content.clone()),
+            _ => None,
+        });
+    let outcome = vault::save_file_with_revisions(
+        &vault,
+        path,
+        content,
+        encoding,
+        eol,
+        Some(inner.settings.retention()),
+    )
+    .map_err(|error| error.to_string())?;
+    let previous = match pending {
+        Some(text) if !text.is_empty() => {
+            inner.undo.pop_undo();
+            text
+        }
+        _ => vault::read_text(&vault, path).unwrap_or_default(),
+    };
+    inner.undo.push(
+        format!("editing {}", basename(path)),
+        UndoAction::Save {
+            path: path.to_string(),
+            content: previous,
+        },
+    );
     if let Some(index) = inner.index.as_mut() {
         let name = path
             .rsplit('/')
@@ -307,7 +439,62 @@ fn create_item_impl(
             let _ = index.upsert_file(&created.path, &leaf, size, mtime, Some(""));
         }
     }
+    inner.undo.push(
+        format!("creating {}", basename(&created.path)),
+        UndoAction::Create {
+            path: created.path.clone(),
+            is_dir: created.is_dir,
+        },
+    );
     Ok(created)
+}
+
+#[tauri::command]
+pub async fn move_item(
+    state: State<'_, Arc<AppState>>,
+    source: String,
+    target_parent: String,
+) -> Result<String, String> {
+    let state: Arc<AppState> = (*state).clone();
+    spawn_blocking(move || move_item_impl(&state, &source, &target_parent))
+        .await
+        .map_err(|_| "The operation could not be completed.".to_string())?
+}
+
+fn move_item_impl(
+    state: &Arc<AppState>,
+    source: &str,
+    target_parent: &str,
+) -> Result<String, String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let vault = inner
+        .vault
+        .as_ref()
+        .ok_or_else(|| "Open a vault first.".to_string())?
+        .clone();
+    let new_path = vault::move_item(&vault, source, target_parent)
+        .map_err(|error| error.to_string())?;
+    if new_path != source {
+        if let Err(error) = crate::revisions::move_path(&vault, source, &new_path) {
+            crate::log::line("warn", &format!("revision move failed: {error}"));
+        }
+        if let Some(index) = inner.index.as_mut() {
+            if let Err(error) = index.move_path(source, &new_path) {
+                crate::log::line("error", &format!("index move failed: {error}"));
+            }
+        }
+        inner.undo.push(
+            format!("moving {}", basename(source)),
+            UndoAction::Move {
+                from: source.to_string(),
+                to: new_path.clone(),
+            },
+        );
+    }
+    Ok(new_path)
 }
 
 #[tauri::command]
@@ -329,12 +516,43 @@ fn delete_item_impl(state: &Arc<AppState>, path: &str) -> Result<(), String> {
     let vault = inner
         .vault
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
-    vault::delete_item(vault, path).map_err(|error| error.to_string())?;
+        .ok_or_else(|| "Open a vault first.".to_string())?
+        .clone();
+    let absolute = vault
+        .resolve_existing(path)
+        .map_err(|error| error.to_string())?;
+    // A copy is kept outside the vault so the deletion can be reversed, then
+    // the original goes to the system trash as before.
+    let entry = inner
+        .undo_backup_dir
+        .clone()
+        .and_then(|backup| undo::capture(&backup, path, &absolute).ok());
+    if let Err(error) = vault::delete_item(&vault, path) {
+        if let Some(entry) = entry.as_ref() {
+            let _ = std::fs::remove_dir_all(&entry.backup);
+            let _ = std::fs::remove_file(&entry.backup);
+        }
+        return Err(error.to_string());
+    }
+    if let Some(entry) = entry {
+        inner.undo.push(
+            format!("deleting {}", basename(path)),
+            UndoAction::RestoreTrash {
+                entries: vec![entry],
+            },
+        );
+    }
+    if let Err(error) = crate::revisions::remove_path(&vault, path) {
+        crate::log::line("warn", &format!("revision delete failed: {error}"));
+    }
     if let Some(index) = inner.index.as_mut() {
         let _ = index.remove_path(path);
     }
     Ok(())
+}
+
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 #[tauri::command]
@@ -382,13 +600,8 @@ fn rescan_impl(state: &Arc<AppState>) -> Result<usize, String> {
         .clone();
     if inner.index.is_none() {
         let database = index_database_path(&state.data_dir, vault.root());
-        match Index::open(&database, vault.root()) {
-            Ok(index) => {
-                inner.index = Some(index);
-                inner.index_notice = None;
-            }
-            Err(error) => return Err(error),
-        }
+        inner.index = Some(Index::open(&database, vault.root())?);
+        inner.index_notice = None;
     }
     let index = inner.index.as_mut().expect("index was opened");
     tree::rescan_index(index, &vault)
@@ -414,8 +627,24 @@ pub fn get_organization(
         tags: index.tags_map(),
         tag_counts: index.tag_counts(),
         pins: index.pins(),
-        recents: index.recents(20),
+        recents: index.recents(100),
     })
+}
+
+#[tauri::command]
+pub fn remove_recent(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<(), String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let index = inner
+        .index
+        .as_mut()
+        .ok_or_else(|| "Recent files are unavailable because the search index is not open.".to_string())?;
+    index.remove_recent(&path)
 }
 
 #[tauri::command]
@@ -490,6 +719,283 @@ pub fn set_sort_order(
         "Custom order is unavailable because the search index is not open.".to_string()
     })?;
     index.set_sort_order(&parent, &names)
+}
+
+#[tauri::command]
+pub fn desktop_shortcut_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<DesktopShortcutStatus, String> {
+    let inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    Ok(desktop::status(inner.settings.desktop_shortcut_prompted))
+}
+
+#[tauri::command]
+pub fn resolve_desktop_shortcut(
+    state: State<'_, Arc<AppState>>,
+    create: bool,
+) -> Result<DesktopShortcutStatus, String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let status = desktop::status(inner.settings.desktop_shortcut_prompted);
+    if status.supported {
+        if create && !status.exists {
+            desktop::create()?;
+        }
+        inner.settings.desktop_shortcut_prompted = true;
+        settings::save(&state.settings_path(), &inner.settings)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(desktop::status(inner.settings.desktop_shortcut_prompted))
+}
+
+#[tauri::command]
+pub fn undo_state(state: State<'_, Arc<AppState>>) -> Result<UndoState, String> {
+    let inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    Ok(inner.undo.state())
+}
+
+#[tauri::command]
+pub async fn undo(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let state: Arc<AppState> = (*state).clone();
+    spawn_blocking(move || step_impl(&state, true))
+        .await
+        .map_err(|_| "The operation could not be completed.".to_string())?
+}
+
+#[tauri::command]
+pub async fn redo(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let state: Arc<AppState> = (*state).clone();
+    spawn_blocking(move || step_impl(&state, false))
+        .await
+        .map_err(|_| "The operation could not be completed.".to_string())?
+}
+
+/// Walk one step of the history. Undo reverses the newest step and files it
+/// for redo; redo does the opposite.
+fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let vault = inner
+        .vault
+        .as_ref()
+        .ok_or_else(|| "Open a vault first.".to_string())?
+        .clone();
+    let popped = if reverse {
+        inner.undo.pop_undo()
+    } else {
+        inner.undo.pop_redo()
+    };
+    let (label, action) = popped.ok_or_else(|| {
+        if reverse {
+            "There is nothing to undo.".to_string()
+        } else {
+            "There is nothing to redo.".to_string()
+        }
+    })?;
+
+    let outcome = perform(&vault, inner.undo_backup_dir.as_deref(), &action, reverse);
+    match outcome {
+        Ok((inverse, message)) => {
+            // A restored deletion cannot be repeated, so it leaves no redo
+            // step; everything else can be replayed.
+            let repeatable = !matches!(inverse, UndoAction::RestoreTrash { .. });
+            if reverse {
+                if repeatable {
+                    inner.undo.push_redo(label, inverse);
+                }
+            } else {
+                inner.undo.push_undo(label, inverse);
+            }
+            if let Some(index) = inner.index.as_mut() {
+                let _ = refresh_index(index, &vault, &action, reverse);
+            }
+            Ok(message)
+        }
+        Err(error) => {
+            // Nothing changed, so the step stays where it was.
+            if reverse {
+                inner.undo.push_undo(label, action);
+            } else {
+                inner.undo.push_redo(label, action);
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Apply one end of a recorded step. Returns the step that reverses it and a
+/// short status message.
+fn perform(
+    vault: &Vault,
+    backup_root: Option<&Path>,
+    action: &UndoAction,
+    reverse: bool,
+) -> Result<(UndoAction, String), String> {
+    match action {
+        UndoAction::Save { path, content } => {
+            let current = vault::read_text(vault, path).map_err(|error| error.to_string())?;
+            let absolute = vault
+                .resolve_for_write(path)
+                .map_err(|error| error.to_string())?;
+            let bytes = std::fs::read(&absolute)
+                .map_err(|_| "The file could not be read.".to_string())?;
+            let decoded = crate::encoding::decode(&bytes);
+            let text = if reverse { content } else { &current };
+            let encoded = crate::encoding::encode(text, decoded.encoding, decoded.eol);
+            crate::atomic::atomic_write(&absolute, &encoded)
+                .map_err(|_| "The file could not be restored.".to_string())?;
+            let previous = if reverse { current } else { content.clone() };
+            Ok((
+                UndoAction::Save {
+                    path: path.clone(),
+                    content: previous,
+                },
+                if reverse {
+                    format!("Restored {} to its previous text.", basename(path))
+                } else {
+                    format!("Reapplied the edit to {}.", basename(path))
+                },
+            ))
+        }
+        UndoAction::Move { from, to } => {
+            let (source, destination) = if reverse {
+                (to.as_str(), from.as_str())
+            } else {
+                (from.as_str(), to.as_str())
+            };
+            if let Err(error) = crate::revisions::remove_path(vault, destination) {
+                crate::log::line("warn", &format!("stale revision path: {error}"));
+            }
+            let moved = vault::move_item(vault, source, &parent_of(destination))
+                .map_err(|error| error.to_string())?;
+            if let Err(error) = crate::revisions::move_path(vault, source, &moved) {
+                crate::log::line("warn", &format!("revision move failed: {error}"));
+            }
+            let moved_action = if reverse {
+                UndoAction::Move {
+                    from: destination.to_string(),
+                    to: moved.clone(),
+                }
+            } else {
+                UndoAction::Move {
+                    from: source.to_string(),
+                    to: moved.clone(),
+                }
+            };
+            Ok((moved_action, format!("Moved {moved}.")))
+        }
+        UndoAction::Create { path, is_dir } => {
+            if reverse {
+                let absolute = vault
+                    .resolve_existing(path)
+                    .map_err(|error| error.to_string())?;
+                let metadata = std::fs::symlink_metadata(&absolute)
+                    .map_err(|_| "The item no longer exists.".to_string())?;
+                if metadata.is_dir() {
+                    let empty = std::fs::read_dir(&absolute)
+                        .map(|mut entries| entries.next().is_none())
+                        .unwrap_or(false);
+                    if !empty {
+                        return Err(
+                            "That folder now holds files, so it was left in place.".to_string()
+                        );
+                    }
+                    std::fs::remove_dir(&absolute)
+                        .map_err(|_| "The folder could not be removed.".to_string())?;
+                } else {
+                    std::fs::remove_file(&absolute)
+                        .map_err(|_| "The file could not be removed.".to_string())?;
+                }
+                Ok((
+                    UndoAction::Create {
+                        path: path.clone(),
+                        is_dir: *is_dir,
+                    },
+                    format!("Removed {path}."),
+                ))
+            } else {
+                let created = vault::create_item(
+                    vault,
+                    &parent_of(path),
+                    basename(path),
+                    *is_dir,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok((
+                    UndoAction::Create {
+                        path: created.path.clone(),
+                        is_dir: created.is_dir,
+                    },
+                    format!("Recreated {}.", created.path),
+                ))
+            }
+        }
+        UndoAction::RestoreTrash { entries } => {
+            if reverse {
+                let mut restored = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    let path = undo::restore(vault, entry).map_err(|error| error.to_string())?;
+                    restored.push(undo::TrashedEntry {
+                        path,
+                        ..entry.clone()
+                    });
+                }
+                let message = match restored.first() {
+                    Some(entry) => format!("Restored {}.", entry.path),
+                    None => "Nothing to restore.".to_string(),
+                };
+                Ok((UndoAction::RestoreTrash { entries: restored }, message))
+            } else {
+                let _ = backup_root;
+                Err("A restored item is not deleted again.".to_string())
+            }
+        }
+    }
+}
+
+fn refresh_index(
+    index: &mut Index,
+    vault: &Vault,
+    action: &UndoAction,
+    _reverse: bool,
+) -> Result<(), String> {
+    match action {
+        UndoAction::Save { path, .. } => {
+            if let Ok(text) = vault::read_text(vault, path) {
+                let name = basename(path).to_string();
+                let size = text.len() as i64;
+                index.upsert_file(path, &name, size, 0, Some(&text))?;
+            }
+        }
+        UndoAction::Move { from, to } => {
+            index.move_path(from, to)?;
+        }
+        UndoAction::Create { path, .. } => {
+            index.remove_path(path)?;
+        }
+        UndoAction::RestoreTrash { entries } => {
+            for entry in entries {
+                index.remove_path(&entry.path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parent_of(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+        .unwrap_or_default()
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::atomic::{atomic_create, atomic_write};
 use crate::errors::{AppError, AppResult};
+use crate::revisions::Retention;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
@@ -14,6 +15,17 @@ pub struct Settings {
     pub default_sort: String,
     pub default_vault: Option<String>,
     pub tab_width: u32,
+    pub pinned_limit: u32,
+    pub recent_limit: u32,
+    pub autosave_mode: String,
+    pub autosave_idle_secs: u32,
+    pub autosave_interval_secs: u32,
+    pub revision_hourly: u32,
+    pub revision_daily: u32,
+    pub revision_weekly: u32,
+    pub revision_monthly: u32,
+    pub revision_yearly: u32,
+    pub desktop_shortcut_prompted: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +37,17 @@ impl Default for Settings {
             default_sort: "name".into(),
             default_vault: None,
             tab_width: 4,
+            pinned_limit: 5,
+            recent_limit: 5,
+            autosave_mode: "off".into(),
+            autosave_idle_secs: 20,
+            autosave_interval_secs: 120,
+            revision_hourly: 24,
+            revision_daily: 7,
+            revision_weekly: 4,
+            revision_monthly: 12,
+            revision_yearly: 100,
+            desktop_shortcut_prompted: false,
         }
     }
 }
@@ -39,10 +62,32 @@ impl Settings {
         }
         self.font_size = self.font_size.clamp(8, 48);
         self.tab_width = self.tab_width.clamp(1, 16);
+        self.pinned_limit = self.pinned_limit.clamp(1, 100);
+        self.recent_limit = self.recent_limit.clamp(1, 100);
+        if !matches!(self.autosave_mode.as_str(), "off" | "idle" | "interval") {
+            self.autosave_mode = "off".into();
+        }
+        self.autosave_idle_secs = self.autosave_idle_secs.clamp(1, 60);
+        self.autosave_interval_secs = self.autosave_interval_secs.clamp(120, 3600);
+        self.revision_hourly = self.revision_hourly.min(1000);
+        self.revision_daily = self.revision_daily.min(1000);
+        self.revision_weekly = self.revision_weekly.min(1000);
+        self.revision_monthly = self.revision_monthly.min(1000);
+        self.revision_yearly = self.revision_yearly.min(1000);
         if self.font_family.trim().is_empty() {
             self.font_family = Settings::default().font_family;
         }
         self
+    }
+
+    pub fn retention(&self) -> Retention {
+        Retention {
+            hourly: self.revision_hourly,
+            daily: self.revision_daily,
+            weekly: self.revision_weekly,
+            monthly: self.revision_monthly,
+            yearly: self.revision_yearly,
+        }
     }
 }
 
@@ -127,6 +172,16 @@ mod tests {
         let settings = Settings {
             tab_width: 99,
             font_size: 1,
+            pinned_limit: 0,
+            recent_limit: 999,
+            autosave_mode: "bad".into(),
+            autosave_idle_secs: 0,
+            autosave_interval_secs: 1,
+            revision_hourly: 0,
+            revision_daily: 9999,
+            revision_weekly: 4,
+            revision_monthly: 12,
+            revision_yearly: 100,
             theme: "dark".into(),
             ..Settings::default()
         };
@@ -134,6 +189,16 @@ mod tests {
         let loaded = load(&path);
         assert_eq!(loaded.settings.tab_width, 16);
         assert_eq!(loaded.settings.font_size, 8);
+        assert_eq!(loaded.settings.pinned_limit, 1);
+        assert_eq!(loaded.settings.recent_limit, 100);
+        assert_eq!(loaded.settings.autosave_mode, "off");
+        assert_eq!(loaded.settings.autosave_idle_secs, 1);
+        assert_eq!(loaded.settings.autosave_interval_secs, 120);
+        assert_eq!(loaded.settings.revision_hourly, 0);
+        assert_eq!(loaded.settings.revision_daily, 1000);
+        assert_eq!(loaded.settings.revision_weekly, 4);
+        assert_eq!(loaded.settings.revision_monthly, 12);
+        assert_eq!(loaded.settings.revision_yearly, 100);
         assert_eq!(loaded.settings.theme, "dark");
     }
 }

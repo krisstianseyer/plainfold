@@ -218,6 +218,17 @@ impl Index {
             .map_err(|_| "The search index could not be updated.".to_string())
     }
 
+    /// Recorded size and modification time for one file, if it is indexed.
+    pub fn file_meta(&self, path: &str) -> Option<(i64, i64)> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT size, mtime_ms FROM files WHERE path = ?1")
+            .ok()?;
+        statement
+            .query_row(params![path], |row| Ok((row.get(0)?, row.get(1)?)))
+            .ok()
+    }
+
     pub fn indexed_files(&self) -> Vec<(String, i64, i64)> {
         let mut statement = match self
             .connection
@@ -502,6 +513,64 @@ impl Index {
         }
     }
 
+    pub fn remove_recent(&mut self, path: &str) -> Result<(), String> {
+        self.connection
+            .execute("DELETE FROM recents WHERE path = ?1", params![path])
+            .map_err(|_| "The recent file could not be removed.".to_string())?;
+        Ok(())
+    }
+
+    pub fn move_path(&mut self, old: &str, new: &str) -> Result<(), String> {
+        let tx = self
+            .connection
+            .transaction()
+            .map_err(|_| "The search index could not be moved.".to_string())?;
+        let old_prefix = format!("{old}/");
+        let like = format!("{}%", escape_like(&old_prefix));
+        for table in ["files", "files_fts", "tags", "pins", "recents"] {
+            let sql = format!(
+                "UPDATE {table} SET path = ?1 || substr(path, length(?2) + 1)
+                 WHERE path = ?2 OR path LIKE ?3 ESCAPE '\\'"
+            );
+            tx.execute(&sql, params![new, old, like])
+                .map_err(|_| "The search index could not be moved.".to_string())?;
+        }
+
+        tx.execute(
+            "UPDATE sort_order SET parent = ?1 || substr(parent, length(?2) + 1)
+             WHERE parent = ?2 OR parent LIKE ?3 ESCAPE '\\'",
+            params![new, old, like],
+        )
+        .map_err(|_| "The custom order could not be moved.".to_string())?;
+
+        let (old_parent, leaf) = split_parent(old);
+        let (new_parent, _) = split_parent(new);
+        tx.execute(
+            "DELETE FROM sort_order WHERE parent = ?1 AND name = ?2",
+            params![old_parent, leaf],
+        )
+        .map_err(|_| "The custom order could not be moved.".to_string())?;
+        let has_custom_order: i64 = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sort_order WHERE parent = ?1)",
+                params![new_parent],
+                |row| row.get(0),
+            )
+            .map_err(|_| "The custom order could not be moved.".to_string())?;
+        if has_custom_order != 0 {
+            tx.execute(
+                "INSERT INTO sort_order(parent, name, position)
+                 VALUES (?1, ?2,
+                    (SELECT COALESCE(MAX(position) + 1, 0) FROM sort_order WHERE parent = ?1))
+                 ON CONFLICT(parent, name) DO UPDATE SET position = excluded.position",
+                params![new_parent, leaf],
+            )
+            .map_err(|_| "The custom order could not be moved.".to_string())?;
+        }
+        tx.commit()
+            .map_err(|_| "The search index could not be moved.".to_string())
+    }
+
     pub fn set_sort_order(&mut self, parent: &str, names: &[String]) -> Result<(), String> {
         let tx = self
             .connection
@@ -598,6 +667,13 @@ fn escape_like(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+fn split_parent(path: &str) -> (String, String) {
+    match path.rsplit_once('/') {
+        Some((parent, leaf)) => (parent.to_string(), leaf.to_string()),
+        None => (String::new(), path.to_string()),
+    }
 }
 
 fn build_fts_query(query: &str) -> Option<String> {
@@ -704,10 +780,59 @@ mod tests {
         assert_eq!(index.pins(), vec!["a.txt"]);
         index.record_recent("a.txt").unwrap();
         assert_eq!(index.recents(20), vec!["a.txt"]);
+        index.remove_recent("a.txt").unwrap();
+        assert!(index.recents(20).is_empty());
         index
             .set_sort_order("", &["b.txt".into(), "a.txt".into()])
             .unwrap();
         assert_eq!(index.sort_positions("")["b.txt"], 0);
+    }
+
+    #[test]
+    fn move_updates_file_paths_and_organization() {
+        let (dir, mut index) = setup();
+        std::fs::create_dir(dir.path().join("folder")).unwrap();
+        std::fs::create_dir(dir.path().join("archive")).unwrap();
+        std::fs::write(dir.path().join("folder/a.txt"), "needle\n").unwrap();
+        index
+            .upsert_file("folder/a.txt", "a.txt", 7, 1, Some("needle\n"))
+            .unwrap();
+        index.set_tags("folder/a.txt", &["work".into()]).unwrap();
+        index.set_pin("folder/a.txt", true).unwrap();
+        index.record_recent("folder/a.txt").unwrap();
+        std::fs::rename(
+            dir.path().join("folder/a.txt"),
+            dir.path().join("archive/a.txt"),
+        )
+        .unwrap();
+        index.move_path("folder/a.txt", "archive/a.txt").unwrap();
+        assert_eq!(index.tags_for("archive/a.txt"), vec!["work"]);
+        assert_eq!(index.pins(), vec!["archive/a.txt"]);
+        assert_eq!(index.recents(20), vec!["archive/a.txt"]);
+        let hits = index.search("needle", 20).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "archive/a.txt");
+    }
+
+    #[test]
+    fn move_folder_keeps_custom_order() {
+        let (dir, mut index) = setup();
+        std::fs::create_dir(dir.path().join("folder")).unwrap();
+        std::fs::create_dir(dir.path().join("archive")).unwrap();
+        for name in ["a.txt", "b.txt"] {
+            std::fs::write(dir.path().join("folder").join(name), name).unwrap();
+            index
+                .upsert_file(&format!("folder/{name}"), name, 5, 1, Some(name))
+                .unwrap();
+        }
+        index
+            .set_sort_order("folder", &["b.txt".into(), "a.txt".into()])
+            .unwrap();
+        std::fs::rename(dir.path().join("folder"), dir.path().join("archive/folder")).unwrap();
+        index.move_path("folder", "archive/folder").unwrap();
+        assert_eq!(index.sort_positions("archive/folder")["b.txt"], 0);
+        assert_eq!(index.sort_positions("archive/folder")["a.txt"], 1);
+        assert_eq!(index.tags_for("folder/a.txt"), Vec::<String>::new());
     }
 
     #[test]

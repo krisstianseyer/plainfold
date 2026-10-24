@@ -1,14 +1,18 @@
 pub mod atomic;
 pub mod commands;
+pub mod desktop;
 pub mod encoding;
 pub mod errors;
+pub mod filetype;
 pub mod index;
 pub mod log;
 pub mod names;
 pub mod paths;
+pub mod revisions;
 pub mod settings;
 pub mod state;
 pub mod tree;
+pub mod undo;
 pub mod vault;
 pub mod watcher;
 
@@ -42,16 +46,26 @@ pub fn run() {
             commands::open_vault,
             commands::list_tree,
             commands::read_file,
+            commands::open_external,
+            commands::list_revisions,
+            commands::restore_revision,
             commands::save_file,
             commands::create_item,
+            commands::move_item,
             commands::delete_item,
             commands::search,
             commands::rescan,
             commands::get_organization,
+            commands::remove_recent,
             commands::set_tags,
             commands::set_pin,
             commands::set_sort_order,
+            commands::desktop_shortcut_status,
+            commands::resolve_desktop_shortcut,
             commands::save_settings,
+            commands::undo_state,
+            commands::undo,
+            commands::redo,
         ])
         .run(tauri::generate_context!())
         .expect("Plainfold could not start");

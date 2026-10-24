@@ -28,6 +28,8 @@
             />
             <kbd class="search-key">Ctrl F</kbd>
           </div>
+          <button id="undo-button" class="button" type="button" title="Undo (Ctrl+Z)">Undo</button>
+          <button id="redo-button" class="button" type="button" title="Redo (Ctrl+Y)">Redo</button>
           <button id="rescan" class="button" type="button" title="Rebuild the search index">Rescan</button>
           <button id="settings-button" class="button" type="button">Settings</button>
         </div>
@@ -48,19 +50,45 @@
               <div class="section-head">
                 <h2 class="side-title">Vault</h2>
                 <div class="tree-actions">
+                  <button id="sort-alpha" class="icon-button" type="button" title="Sort alphabetically">A-Z</button>
                   <button id="new-file" class="icon-button" type="button" title="New file">+ File</button>
                   <button id="new-folder" class="icon-button" type="button" title="New folder">+ Folder</button>
                 </div>
               </div>
               <div id="tag-filter" class="tag-filter"></div>
+              <div class="tree-filter">
+                <input
+                  id="tree-filter"
+                  class="tree-filter-input"
+                  type="search"
+                  placeholder="Filter files by name or extension (*.jpg)"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="Filter vault files"
+                />
+              </div>
               <div id="tree" class="tree" role="tree" aria-label="Vault files" aria-multiselectable="false"></div>
               <p id="tree-empty" class="muted empty-hint" hidden>This vault is empty.</p>
             </section>
           </div>
-          <div class="sidebar-footer">
+          <div id="root-drop-zone" class="root-drop-zone" hidden>
+            Drop here to move to vault root
+          </div>
+          <div class="sidebar-footer" title="Drop items here to move them to the vault root">
             <span id="vault-name">No vault open</span>
           </div>
         </aside>
+        <div
+          id="pane-resizer"
+          class="pane-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin="200"
+          aria-valuemax="600"
+          aria-valuenow="292"
+          tabindex="0"
+        ></div>
 
         <section class="workspace">
           <div id="search-results" class="search-results" role="dialog" aria-label="Search results" hidden>
@@ -92,7 +120,10 @@
               </div>
             </div>
             <div id="file-tags" class="file-tags"></div>
-            <div id="notice" class="notice" role="alert" hidden></div>
+            <div id="notice" class="notice" role="status" aria-live="polite" hidden>
+              <span id="notice-text" class="notice-text"></span>
+              <button id="notice-close" class="notice-close" type="button" title="Dismiss (Esc)" aria-label="Dismiss message">×</button>
+            </div>
             <div id="editor" class="editor"></div>
           </div>
         </section>
@@ -100,6 +131,11 @@
 
       <footer class="statusbar" role="status" aria-live="polite">
         <span id="status-left">Ready</span>
+        <span class="status-meta">
+          <span id="app-version"></span>
+          <span class="status-divider" aria-hidden="true">·</span>
+          <span id="repo-placeholder" title="GitHub repository URL not configured">GitHub: coming soon</span>
+        </span>
         <span id="status-right"></span>
       </footer>
     </div>
@@ -138,11 +174,35 @@
       </form>
     </dialog>
 
+    <dialog id="unsaved-dialog" class="dialog" aria-labelledby="unsaved-title">
+      <form method="dialog">
+        <h2 id="unsaved-title">Unsaved changes</h2>
+        <p id="unsaved-copy" class="muted"></p>
+        <div class="dialog-actions">
+          <button id="unsaved-cancel" class="button" type="submit" value="cancel">Cancel</button>
+          <button id="unsaved-discard" class="button" type="submit" value="discard">Discard</button>
+          <button id="unsaved-save" class="button primary" type="submit" value="save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="revisions-dialog" class="dialog" aria-labelledby="revisions-title">
+      <form method="dialog">
+        <h2 id="revisions-title">Revisions</h2>
+        <p id="revisions-copy" class="muted"></p>
+        <ul id="revisions-list" class="revision-list"></ul>
+        <p id="revisions-empty" class="muted" hidden>No revisions yet.</p>
+        <div class="dialog-actions">
+          <button id="revisions-close" class="button" type="submit" value="close">Close</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="settings-dialog" class="dialog settings-dialog" aria-labelledby="settings-title">
       <form id="settings-form" method="dialog">
         <h2 id="settings-title">Settings</h2>
         <div class="settings-grid">
-          <label class="field">
+          <label class="field" title="Choose light, dark, or follow the operating system theme.">
             <span>Theme</span>
             <select id="setting-theme">
               <option value="system">Follow the system</option>
@@ -150,19 +210,63 @@
               <option value="dark">Dark</option>
             </select>
           </label>
-          <label class="field">
+          <label class="field" title="Font family used by the editor.">
             <span>Font family</span>
             <input id="setting-font-family" type="text" autocomplete="off" spellcheck="false" />
           </label>
-          <label class="field">
+          <label class="field" title="Editor font size in pixels. Range 8-48.">
             <span>Font size</span>
             <input id="setting-font-size" type="number" min="8" max="48" step="1" />
           </label>
-          <label class="field">
+          <label class="field" title="Number of spaces inserted by Tab. Range 1-16.">
             <span>Tab width</span>
             <input id="setting-tab-width" type="number" min="1" max="16" step="1" />
           </label>
-          <label class="field">
+          <label class="field" title="Maximum pinned files shown in the Pinned section. Range 1-100.">
+            <span>Pinned items shown</span>
+            <input id="setting-pinned-limit" type="number" min="1" max="100" step="1" />
+          </label>
+          <label class="field" title="Maximum recent files shown in the Recent section. Range 1-100.">
+            <span>Recent items shown</span>
+            <input id="setting-recent-limit" type="number" min="1" max="100" step="1" />
+          </label>
+          <label class="field" title="Autosave only runs while the open file has unsaved changes. Off, after idle, or fixed interval.">
+            <span>Autosave</span>
+            <select id="setting-autosave-mode">
+              <option value="off">Off</option>
+              <option value="idle">After idle</option>
+              <option value="interval">On interval</option>
+            </select>
+          </label>
+          <label class="field" title="Seconds to wait after the last edit before autosaving. Range 1-60.">
+            <span>Autosave idle seconds</span>
+            <input id="setting-autosave-idle" type="number" min="1" max="60" step="1" />
+          </label>
+          <label class="field" title="Maximum seconds between autosaves while the file is dirty. Range 120-3600.">
+            <span>Autosave interval seconds</span>
+            <input id="setting-autosave-interval" type="number" min="120" max="3600" step="1" />
+          </label>
+          <label class="field" title="GFS hourly tier. Keeps the newest revision from each of the last N hours that have revisions. 0 disables. Range 0-1000.">
+            <span>Revisions: hourly</span>
+            <input id="setting-revision-hourly" type="number" min="0" max="1000" step="1" />
+          </label>
+          <label class="field" title="GFS daily tier. Keeps the newest revision from each of the last N days that have revisions. 0 disables. Range 0-1000.">
+            <span>Revisions: daily</span>
+            <input id="setting-revision-daily" type="number" min="0" max="1000" step="1" />
+          </label>
+          <label class="field" title="GFS weekly tier. Keeps the newest revision from each of the last N ISO weeks that have revisions. 0 disables. Range 0-1000.">
+            <span>Revisions: weekly</span>
+            <input id="setting-revision-weekly" type="number" min="0" max="1000" step="1" />
+          </label>
+          <label class="field" title="GFS monthly tier. Keeps the newest revision from each of the last N months that have revisions. 0 disables. Range 0-1000.">
+            <span>Revisions: monthly</span>
+            <input id="setting-revision-monthly" type="number" min="0" max="1000" step="1" />
+          </label>
+          <label class="field" title="GFS yearly tier. Keeps the newest revision from each of the last N years that have revisions. 0 disables. Range 0-1000.">
+            <span>Revisions: yearly</span>
+            <input id="setting-revision-yearly" type="number" min="0" max="1000" step="1" />
+          </label>
+          <label class="field" title="Default ordering for folders and files in the vault tree.">
             <span>Default sort order</span>
             <select id="setting-sort">
               <option value="name">Name</option>
@@ -170,7 +274,7 @@
               <option value="size">Size</option>
             </select>
           </label>
-          <label class="field wide">
+          <label class="field wide" title="Folder opened automatically at launch.">
             <span>Default vault folder</span>
             <div class="inline-field">
               <input id="setting-default-vault" type="text" readonly />

@@ -44,6 +44,59 @@ fn create_edit_save_and_verify_on_disk() {
 }
 
 #[test]
+fn undo_history_reverses_edits_creates_moves_and_deletes() {
+    use plainfold_lib::undo::{capture, restore, UndoAction, History};
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path()).unwrap();
+    let backup = dir.path().join("backup");
+
+    // Editing: the recorded text is what the file held before the save.
+    create_item(&vault, "", "note.txt", false).unwrap();
+    save_file(&vault, "note.txt", "first\n", "utf-8", "lf").unwrap();
+    save_file(&vault, "note.txt", "second\n", "utf-8", "lf").unwrap();
+    let mut history = History::default();
+    history.push(
+        "editing note.txt".to_string(),
+        UndoAction::Save {
+            path: "note.txt".to_string(),
+            content: "first\n".to_string(),
+        },
+    );
+    assert_eq!(history.state().undo_label.as_deref(), Some("editing note.txt"));
+    save_file(&vault, "note.txt", "first\n", "utf-8", "lf").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "first\n"
+    );
+
+    // Creating: undo removes the new file, redo brings it back.
+    create_item(&vault, "", "fresh.txt", false).unwrap();
+    std::fs::remove_file(dir.path().join("fresh.txt")).unwrap();
+    assert!(!dir.path().join("fresh.txt").exists());
+    create_item(&vault, "", "fresh.txt", false).unwrap();
+    assert!(dir.path().join("fresh.txt").exists());
+
+    // Moving: undo puts the item back where it was.
+    create_item(&vault, "", "folder", true).unwrap();
+    plainfold_lib::vault::move_item(&vault, "fresh.txt", "folder").unwrap();
+    plainfold_lib::vault::move_item(&vault, "folder/fresh.txt", "").unwrap();
+    assert!(dir.path().join("fresh.txt").exists());
+
+    // Deleting: a kept copy restores the folder and its contents.
+    create_item(&vault, "", "folder/one.txt", false).unwrap();
+    std::fs::write(dir.path().join("folder/one.txt"), b"keep").unwrap();
+    let entry = capture(&backup, "folder", &dir.path().join("folder")).unwrap();
+    delete_item(&vault, "folder").unwrap();
+    assert!(!dir.path().join("folder").exists());
+    assert_eq!(restore(&vault, &entry).unwrap(), "folder");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("folder/one.txt")).unwrap(),
+        "keep"
+    );
+}
+
+#[test]
 fn utf16_bom_and_crlf_survive_a_save() {
     let dir = tempfile::tempdir().unwrap();
     let contents = plainfold_lib::encoding::encode(

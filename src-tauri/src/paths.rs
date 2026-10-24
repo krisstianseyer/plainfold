@@ -2,6 +2,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
 
+pub const REVISIONS_DIR: &str = ".revisions";
+
 /// A user-selected folder. Every operation resolves through this type so a
 /// path can never escape the canonical vault root.
 #[derive(Debug, Clone)]
@@ -124,6 +126,11 @@ pub fn normalize_relative(relative: &str) -> AppResult<PathBuf> {
         if part.is_empty() || part == "." || part == ".." {
             return Err(AppError::new("That path is not valid."));
         }
+        if part == REVISIONS_DIR || part.eq_ignore_ascii_case(REVISIONS_DIR) {
+            return Err(AppError::new(
+                "That name is reserved for revision history.",
+            ));
+        }
         out.push(part);
     }
     for component in out.components() {
@@ -140,6 +147,10 @@ pub fn normalize_relative_allow_empty(relative: &str) -> AppResult<PathBuf> {
         return Ok(PathBuf::new());
     }
     normalize_relative(relative)
+}
+
+pub fn is_revisions_path(relative: &str) -> bool {
+    relative == REVISIONS_DIR || relative.starts_with(&format!("{REVISIONS_DIR}/"))
 }
 
 pub fn relative_to(root: &Path, candidate: &Path) -> Option<String> {

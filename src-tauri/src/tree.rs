@@ -41,6 +41,10 @@ pub fn build_tree(vault: &Vault, sort: SortOrder, index: Option<&Index>) -> Vec<
     build_dir(vault, vault.root(), sort, index, 0)
 }
 
+fn is_revisions_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case(crate::paths::REVISIONS_DIR)
+}
+
 fn build_dir(
     vault: &Vault,
     directory: &Path,
@@ -69,7 +73,7 @@ fn build_dir(
     let mut nodes = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("plainfold-save-") {
+        if name.starts_with("plainfold-save-") || is_revisions_name(&name) {
             continue;
         }
         let path = entry.path();
@@ -181,7 +185,7 @@ fn walk_for_index(
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("plainfold-save-") {
+        if name.starts_with("plainfold-save-") || is_revisions_name(&name) {
             continue;
         }
         let path = entry.path();
@@ -243,6 +247,18 @@ mod tests {
     }
 
     #[test]
+    fn revision_folder_is_hidden_from_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".revisions")).unwrap();
+        std::fs::write(dir.path().join(".revisions/note.txt.gz"), b"hidden").unwrap();
+        std::fs::write(dir.path().join("note.txt"), "visible").unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let tree = build_tree(&vault, SortOrder::Name, None);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].name, "note.txt");
+    }
+
+    #[test]
     fn custom_order_overrides_name_order() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
@@ -254,5 +270,22 @@ mod tests {
         let vault = Vault::open(dir.path()).unwrap();
         let tree = build_tree(&vault, SortOrder::Name, Some(&index));
         assert_eq!(tree[0].name, "b.txt");
+    }
+
+    #[test]
+    fn custom_order_inside_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("folder")).unwrap();
+        std::fs::write(dir.path().join("folder/a.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("folder/b.txt"), "b").unwrap();
+        let mut index = Index::open(&dir.path().join("index.sqlite"), dir.path()).unwrap();
+        index
+            .set_sort_order("folder", &["b.txt".into(), "a.txt".into()])
+            .unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let tree = build_tree(&vault, SortOrder::Name, Some(&index));
+        let folder = tree.iter().find(|node| node.name == "folder").unwrap();
+        assert_eq!(folder.children[0].name, "b.txt");
+        assert_eq!(folder.children[1].name, "a.txt");
     }
 }

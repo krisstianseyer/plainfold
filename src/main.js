@@ -6,11 +6,15 @@ import { api } from "./api.js";
 import { createEditor } from "./editor.js";
 import {
   basename,
+  contentChangedSince,
   countFiles,
   filterTree,
+  filterTreeByQuery,
   findNode,
   flattenTree,
   formatBytes,
+  formatDate,
+  isPathWithin,
   parentOf,
 } from "./tree-utils.js";
 
@@ -23,17 +27,26 @@ const els = {
   emptyTitle: document.querySelector("#empty-state h1"),
   emptyCopy: document.querySelector("#empty-state p"),
   search: $("search"),
+  undoButton: $("undo-button"),
+  redoButton: $("redo-button"),
   rescan: $("rescan"),
   settingsButton: $("settings-button"),
   pinnedList: $("pinned-list"),
   recentList: $("recent-list"),
   tree: $("tree"),
+  treeFilter: $("tree-filter"),
   treeEmpty: $("tree-empty"),
+  rootDropZone: $("root-drop-zone"),
+  sidebarFooter: document.querySelector(".sidebar-footer"),
   tagFilter: $("tag-filter"),
+  sortAlpha: $("sort-alpha"),
   newFile: $("new-file"),
   newFolder: $("new-folder"),
   vaultName: $("vault-name"),
+  layout: document.querySelector(".layout"),
+  paneResizer: $("pane-resizer"),
   workspace: document.querySelector(".workspace"),
+  sidebar: document.querySelector(".sidebar"),
   editorPane: $("editor-pane"),
   fileName: $("file-name"),
   filePath: $("file-path"),
@@ -43,6 +56,9 @@ const els = {
   saveButton: $("save-button"),
   editor: $("editor"),
   notice: $("notice"),
+  noticeText: $("notice-text"),
+  noticeClose: $("notice-close"),
+  appVersion: $("app-version"),
   statusLeft: $("status-left"),
   statusRight: $("status-right"),
   searchResults: $("search-results"),
@@ -64,12 +80,30 @@ const els = {
   tagsInput: $("tags-input"),
   tagsError: $("tags-error"),
   tagsCancel: $("tags-cancel"),
+  unsavedDialog: $("unsaved-dialog"),
+  unsavedCopy: $("unsaved-copy"),
+  unsavedSave: $("unsaved-save"),
+  revisionsDialog: $("revisions-dialog"),
+  revisionsCopy: $("revisions-copy"),
+  revisionsList: $("revisions-list"),
+  revisionsEmpty: $("revisions-empty"),
+  revisionsClose: $("revisions-close"),
   settingsDialog: $("settings-dialog"),
   settingsForm: $("settings-form"),
   settingTheme: $("setting-theme"),
   settingFontFamily: $("setting-font-family"),
   settingFontSize: $("setting-font-size"),
   settingTabWidth: $("setting-tab-width"),
+  settingPinnedLimit: $("setting-pinned-limit"),
+  settingRecentLimit: $("setting-recent-limit"),
+  settingAutosaveMode: $("setting-autosave-mode"),
+  settingAutosaveIdle: $("setting-autosave-idle"),
+  settingAutosaveInterval: $("setting-autosave-interval"),
+  settingRevisionHourly: $("setting-revision-hourly"),
+  settingRevisionDaily: $("setting-revision-daily"),
+  settingRevisionWeekly: $("setting-revision-weekly"),
+  settingRevisionMonthly: $("setting-revision-monthly"),
+  settingRevisionYearly: $("setting-revision-yearly"),
   settingSort: $("setting-sort"),
   settingDefaultVault: $("setting-default-vault"),
   chooseDefaultVault: $("choose-default-vault"),
@@ -79,6 +113,16 @@ const els = {
   settingsCancel: $("settings-cancel"),
 };
 
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 600;
+const SIDEBAR_DEFAULT = 292;
+const SIDEBAR_STORAGE_KEY = "plainfold.sidebarWidth";
+
+const ZOOM_MIN = 8;
+const ZOOM_MAX = 48;
+const ZOOM_STEP = 1;
+const ZOOM_STORAGE_KEY = "plainfold.zoom";
+
 const DEFAULT_SETTINGS = {
   theme: "system",
   fontFamily: "Consolas",
@@ -86,6 +130,17 @@ const DEFAULT_SETTINGS = {
   defaultSort: "name",
   defaultVault: null,
   tabWidth: 4,
+  pinnedLimit: 5,
+  recentLimit: 5,
+  autosaveMode: "off",
+  autosaveIdleSecs: 20,
+  autosaveIntervalSecs: 120,
+  revisionHourly: 24,
+  revisionDaily: 7,
+  revisionWeekly: 4,
+  revisionMonthly: 12,
+  revisionYearly: 100,
+  desktopShortcutPrompted: false,
 };
 
 const state = {
@@ -103,14 +158,25 @@ const state = {
   pins: [],
   recents: [],
   tagFilter: null,
+  fileFilter: "",
   searchTimer: null,
   searchSequence: 0,
   dragSource: null,
   settingsDraftVault: null,
   dark: false,
   saving: false,
+  moving: false,
+  autosaveTimer: null,
+  autosavePaused: false,
+  sidebarWidth: SIDEBAR_DEFAULT,
   menuReturnFocus: null,
   pendingTreeFocus: null,
+  // Editor zoom in pixels. Null follows the font size from Settings.
+  zoom: null,
+  // Text of the open file on disk, restored when an edit is undone.
+  diskContent: null,
+  undoInfo: { undoLabel: null, redoLabel: null },
+  undoBusy: false,
 };
 
 const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -137,12 +203,19 @@ function updateStatusRight() {
 function setNotice(text, kind = "info") {
   if (!text) {
     els.notice.hidden = true;
-    els.notice.textContent = "";
+    els.noticeText.textContent = "";
     return;
   }
-  els.notice.textContent = text;
+  els.noticeText.textContent = text;
   els.notice.className = kind === "info" ? "notice info" : "notice";
   els.notice.hidden = false;
+}
+
+/** Dismiss whatever message is showing without changing anything else. */
+function dismissNotice() {
+  if (els.notice.hidden) return false;
+  setNotice("");
+  return true;
 }
 
 function updateTitle() {
@@ -171,18 +244,117 @@ function applyTheme() {
     "--editor-font",
     `${fontValue(state.settings.fontFamily)}, "DejaVu Sans Mono", monospace`
   );
+  applyZoom();
+  state.editor?.setTheme(dark);
+}
+
+function clampZoom(value) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value)));
+}
+
+/** The size the editor actually uses: the zoom level when set, otherwise
+ *  the font size from Settings. */
+function editorFontSize() {
+  return state.zoom ?? clampZoom(Number(state.settings.fontSize) || 14);
+}
+
+function applyZoom() {
   document.documentElement.style.setProperty(
     "--editor-size",
-    `${Math.min(Math.max(Number(state.settings.fontSize) || 14, 8), 48)}px`
+    `${editorFontSize()}px`
   );
-  state.editor?.setTheme(dark);
+}
+
+function loadZoom() {
+  try {
+    const value = Number(localStorage.getItem(ZOOM_STORAGE_KEY));
+    if (Number.isFinite(value) && value >= ZOOM_MIN && value <= ZOOM_MAX) {
+      return clampZoom(value);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function saveZoom() {
+  try {
+    if (state.zoom === null) localStorage.removeItem(ZOOM_STORAGE_KEY);
+    else localStorage.setItem(ZOOM_STORAGE_KEY, String(state.zoom));
+  } catch {
+    return;
+  }
+}
+
+/** Drop the zoom level so the font size from Settings applies again. */
+function resetZoom() {
+  if (state.zoom === null) return;
+  state.zoom = null;
+  applyZoom();
+  saveZoom();
+  setStatus("Zoom reset to the size set in Settings.");
+}
+
+/** Zoom by whole steps, keeping the caret visible. */
+function zoomBy(delta) {
+  const next = clampZoom(editorFontSize() + delta * ZOOM_STEP);
+  if (next === editorFontSize()) return;
+  state.zoom = next;
+  applyZoom();
+  saveZoom();
+  setStatus(`Zoom ${next}px. Ctrl+wheel to change, Ctrl+0 to reset.`);
+}
+
+/** Ctrl+wheel is the familiar Notepad gesture. Only the editor reacts; the
+ *  rest of the window keeps its normal scrolling. */
+function wireZoom(element) {
+  element.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      zoomBy(event.deltaY < 0 ? 1 : -1);
+    },
+    { passive: false }
+  );
 }
 
 function applySettings(next) {
   state.settings = { ...DEFAULT_SETTINGS, ...next };
   applyTheme();
   state.editor?.setTabWidth(state.settings.tabWidth);
+  clearAutosave();
+  scheduleAutosave();
+  renderShortLists();
   renderTree();
+}
+
+function loadSidebarWidth() {
+  try {
+    const value = Number(localStorage.getItem(SIDEBAR_STORAGE_KEY));
+    if (Number.isFinite(value) && value >= SIDEBAR_MIN && value <= SIDEBAR_MAX) {
+      return value;
+    }
+  } catch {
+    return SIDEBAR_DEFAULT;
+  }
+  return SIDEBAR_DEFAULT;
+}
+
+function applySidebarWidth(width) {
+  const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
+  state.sidebarWidth = next;
+  els.layout.style.setProperty("--sidebar-width", `${next}px`);
+  els.paneResizer.setAttribute("aria-valuenow", String(next));
+  return next;
+}
+
+function saveSidebarWidth() {
+  try {
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(state.sidebarWidth));
+  } catch {
+    return;
+  }
 }
 
 function updateControls() {
@@ -190,13 +362,21 @@ function updateControls() {
   const hasFile = Boolean(state.currentFile);
   els.search.disabled = !hasVault;
   els.rescan.disabled = !hasVault;
+  const undoLabel = state.undoInfo.undoLabel;
+  els.undoButton.disabled = !hasVault || state.undoBusy;
+  els.undoButton.title = undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : "Nothing to undo";
+  const redoLabel = state.undoInfo.redoLabel;
+  els.redoButton.disabled = !hasVault || state.undoBusy;
+  els.redoButton.title = redoLabel ? `Redo ${redoLabel} (Ctrl+Y)` : "Nothing to redo";
+  els.treeFilter.disabled = !hasVault;
+  els.sortAlpha.disabled = !hasVault;
   els.newFile.disabled = !hasVault;
   els.newFolder.disabled = !hasVault;
   els.wrapToggle.disabled = !hasFile;
   els.saveButton.disabled = !hasFile || state.currentFile?.readOnly || !state.dirty;
   els.saveButton.title = state.currentFile?.readOnly ? "This file is read-only" : "Save (Ctrl+S)";
-  const hasCustomOrder = state.tagFilter !== null;
-  els.tree.classList.toggle("filtered", hasCustomOrder);
+  const filtered = Boolean(state.tagFilter || state.fileFilter);
+  els.tree.classList.toggle("filtered", filtered);
   if (!hasVault) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
@@ -225,7 +405,7 @@ function handleNotices(notices) {
 /* ------------------------------------------------------------------ */
 
 async function chooseVault() {
-  if (!(await canDiscardChanges())) return;
+  if (!(await resolvePendingChanges())) return;
   let selected;
   try {
     selected = await openDialog({
@@ -257,17 +437,22 @@ async function activateVault(path) {
 function applySnapshot(snapshot) {
   closeEditor({ silent: true });
   els.search.value = "";
+  els.treeFilter.value = "";
   hideResults();
   state.settings = { ...DEFAULT_SETTINGS, ...snapshot.settings };
+  els.appVersion.textContent = snapshot.version ? `v${snapshot.version}` : "";
   state.vault = snapshot.vault;
   state.tree = snapshot.tree ?? [];
   state.expanded = new Set();
   state.selected = null;
   state.tagFilter = null;
+  state.fileFilter = "";
   state.tags = new Map();
   state.tagCounts = [];
   state.pins = [];
   state.recents = [];
+  state.undoInfo = { undoLabel: null, redoLabel: null };
+  refreshUndoState();
   applyTheme();
   els.vaultName.textContent = state.vault ? state.vault.path : "No vault open";
   els.vaultName.title = state.vault ? state.vault.path : "";
@@ -296,6 +481,7 @@ async function loadTree() {
   } catch (error) {
     setStatus(errText(error));
   }
+  refreshUndoState();
 }
 
 async function refreshOrganization() {
@@ -330,11 +516,18 @@ async function refreshOrganization() {
 }
 
 function renderShortLists() {
-  renderShortList(els.pinnedList, state.pins, "Nothing pinned.");
-  renderShortList(els.recentList, state.recents.slice(0, 20), "No recent files.");
+  const pinnedLimit = state.settings.pinnedLimit ?? 5;
+  const recentLimit = state.settings.recentLimit ?? 5;
+  renderShortList(els.pinnedList, state.pins.slice(0, pinnedLimit), "Nothing pinned.", "pinned");
+  renderShortList(
+    els.recentList,
+    state.recents.slice(0, recentLimit),
+    "No recent files.",
+    "recent"
+  );
 }
 
-function renderShortList(element, paths, emptyText) {
+function renderShortList(element, paths, emptyText, source) {
   element.textContent = "";
   if (!paths.length) {
     const li = document.createElement("li");
@@ -358,7 +551,7 @@ function renderShortList(element, paths, emptyText) {
       if (!node) return;
       state.selected = path;
       renderTree();
-      showContextMenu(event.clientX, event.clientY, node);
+      showContextMenu(event.clientX, event.clientY, node, source);
     });
     li.append(button);
     element.append(li);
@@ -414,13 +607,19 @@ function renderTagFilter() {
 }
 
 function treeForDisplay() {
-  if (!state.tagFilter) return state.tree;
-  const needle = state.tagFilter.toLowerCase();
-  const matching = new Set();
-  for (const [path, tags] of state.tags) {
-    if (tags.some((tag) => tag.toLowerCase() === needle)) matching.add(path);
+  let display = state.tree;
+  if (state.tagFilter) {
+    const needle = state.tagFilter.toLowerCase();
+    const matching = new Set();
+    for (const [path, tags] of state.tags) {
+      if (tags.some((tag) => tag.toLowerCase() === needle)) matching.add(path);
+    }
+    display = filterTree(display, matching);
   }
-  return filterTree(state.tree, matching);
+  if (state.fileFilter) {
+    display = filterTreeByQuery(display, state.fileFilter);
+  }
+  return display;
 }
 
 function renderTree() {
@@ -440,8 +639,10 @@ function renderTree() {
   els.treeEmpty.hidden = all.length > 0;
   els.treeEmpty.textContent = state.tagFilter
     ? "No files carry this tag."
-    : "This vault is empty.";
-  const filtered = Boolean(state.tagFilter);
+    : state.fileFilter
+      ? "No items match this filter."
+      : "This vault is empty.";
+  const filtered = Boolean(state.tagFilter || state.fileFilter);
   renderNodes(display, 0, filtered);
   const entries = [...els.tree.querySelectorAll(".tree-entry")];
   entries.forEach((entry) => {
@@ -627,7 +828,7 @@ function renderNodes(nodes, depth, filtered) {
       showContextMenu(event.clientX, event.clientY, node);
     });
     row.addEventListener("dragstart", (event) => {
-      if (filtered) {
+      if (filtered || state.saving || state.moving) {
         event.preventDefault();
         return;
       }
@@ -636,31 +837,56 @@ function renderNodes(nodes, depth, filtered) {
         parent: parentOf(node.path),
         name: node.name,
       };
+      els.rootDropZone.hidden = !state.dragSource.parent;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", node.path);
       row.classList.add("dragging");
     });
+    const clearDrop = () => {
+      row.classList.remove("drop-target", "drop-into");
+      delete row.dataset.dropMode;
+      els.tree.querySelectorAll(".drop-target, .drop-into").forEach((element) => {
+        element.classList.remove("drop-target", "drop-into");
+      });
+      els.tree.classList.remove("drop-root");
+      els.rootDropZone.classList.remove("drop-root");
+      els.sidebarFooter.classList.remove("drop-root");
+      els.rootDropZone.hidden = true;
+    };
     row.addEventListener("dragend", () => {
       state.dragSource = null;
       row.classList.remove("dragging");
-      els.tree.querySelectorAll(".drop-target").forEach((element) => {
-        element.classList.remove("drop-target");
-      });
+      clearDrop();
     });
     row.addEventListener("dragover", (event) => {
       const source = state.dragSource;
-      if (!source || source.parent !== parentOf(node.path) || source.path === node.path) {
-        return;
-      }
+      if (!source || source.path === node.path) return;
+      const sameParent = source.parent === parentOf(node.path);
+      const canMoveInto =
+        node.isDir &&
+        node.path !== source.parent &&
+        !isPathWithin(node.path, source.path);
+      if (!sameParent && !canMoveInto) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
-      row.classList.add("drop-target");
+      const rect = row.getBoundingClientRect();
+      const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
+      const into = canMoveInto && (!sameParent || (ratio > 0.25 && ratio < 0.75));
+      row.classList.toggle("drop-target", !into);
+      row.classList.toggle("drop-into", into);
+      row.dataset.dropMode = into ? "into" : "reorder";
     });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-target", "drop-into");
+    });
     row.addEventListener("drop", async (event) => {
       event.preventDefault();
-      row.classList.remove("drop-target");
-      await dropReorder(node, event);
+      const source = state.dragSource;
+      const mode = row.dataset.dropMode;
+      clearDrop();
+      if (!source) return;
+      if (mode === "into") await movePath(source.path, node.path);
+      else await dropReorder(node, event);
     });
 
     row.append(disclosure, entry);
@@ -731,6 +957,34 @@ async function moveNode(node, delta) {
   }
 }
 
+function compareNames(a, b) {
+  const aLower = a.toLowerCase();
+  const bLower = b.toLowerCase();
+  if (aLower < bLower) return -1;
+  if (aLower > bLower) return 1;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+async function sortAlphabetically(parent) {
+  const folder = parent ? findNode(state.tree, parent) : null;
+  if (parent && !folder) {
+    setStatus("That folder is no longer available.");
+    return;
+  }
+  const names = (folder ? folder.children ?? [] : state.tree)
+    .map((node) => node.name)
+    .sort(compareNames);
+  try {
+    await api.setSortOrder(parent, names);
+    await loadTree();
+    setStatus("Sorted alphabetically.");
+  } catch (error) {
+    setStatus(errText(error));
+  }
+}
+
 async function resetOrder(parent) {
   try {
     await api.setSortOrder(parent, []);
@@ -741,7 +995,7 @@ async function resetOrder(parent) {
   }
 }
 
-function showContextMenu(x, y, node) {
+function showContextMenu(x, y, node, source = null) {
   els.contextMenu.textContent = "";
   state.menuReturnFocus = document.activeElement;
   const add = (label, action, danger = false, disabled = false) => {
@@ -762,11 +1016,16 @@ function showContextMenu(x, y, node) {
   if (!node) {
     add("New file…", () => createItem("", false));
     add("New folder…", () => createItem("", true));
+    add("Sort alphabetically", () => sortAlphabetically(""));
     separator();
     add("Reset custom order", () => resetOrder(""));
   } else if (node.isDir) {
     add("New file…", () => createItem(node.path, false));
     add("New folder…", () => createItem(node.path, true));
+    add("Sort alphabetically", () => sortAlphabetically(node.path));
+    if (node.path.includes("/")) {
+      add("Move to vault root", () => movePath(node.path, ""));
+    }
     const siblings = siblingNodes(node);
     const index = siblings.findIndex((sibling) => sibling.path === node.path);
     add("Move up", () => moveNode(node, -1), false, index <= 0);
@@ -776,9 +1035,24 @@ function showContextMenu(x, y, node) {
     add("Delete folder…", () => deleteItem(node), true);
   } else {
     add("Open", () => openFile(node.path));
+    add("Show revisions…", () => showRevisions(node.path));
     const pinned = state.pins.includes(node.path);
-    add(pinned ? "Unpin" : "Pin", () => togglePin(node.path));
+    if (source === "pinned") {
+      add("Unpin from Pinned", () => togglePin(node.path));
+    } else {
+      add(pinned ? "Unpin" : "Pin", () => togglePin(node.path));
+    }
+    if (source === "recent") {
+      add("Remove from Recent", () => removeRecent(node.path));
+    }
+    if (source) {
+      add("Reveal in vault", () => revealInTree(node.path));
+    }
     add("Edit tags…", () => editTags(node.path));
+    add("Sort alphabetically", () => sortAlphabetically(parentOf(node.path)));
+    if (node.path.includes("/")) {
+      add("Move to vault root", () => movePath(node.path, ""));
+    }
     const siblings = siblingNodes(node);
     const index = siblings.findIndex((sibling) => sibling.path === node.path);
     add("Move up", () => moveNode(node, -1), false, index <= 0);
@@ -861,7 +1135,7 @@ async function deleteItem(node) {
     state.currentFile &&
     (state.currentFile.path === node.path ||
       state.currentFile.path.startsWith(`${node.path}/`));
-  if (affectsCurrent && state.dirty && !(await canDiscardChanges())) return;
+  if (affectsCurrent && !(await resolvePendingChanges())) return;
   const confirmed = await confirmDialog(
     `Move the ${kind} “${node.name}” to the trash?`,
     { title: "Delete", kind: "warning" }
@@ -892,6 +1166,74 @@ async function togglePin(path) {
   }
 }
 
+async function removeRecent(path) {
+  try {
+    await api.removeRecent(path);
+    await refreshOrganization();
+    setStatus(`Removed ${basename(path)} from Recent.`);
+  } catch (error) {
+    setStatus(errText(error));
+  }
+}
+
+function revealInTree(path) {
+  const node = findNode(state.tree, path);
+  if (!node) {
+    setStatus("That file is no longer in the vault.");
+    return;
+  }
+  ensureExpanded(path);
+  state.selected = path;
+  state.pendingTreeFocus = path;
+  renderTree();
+  setStatus(`Revealed ${basename(path)} in the vault tree.`);
+}
+
+function remapExpanded(oldPath, newPath) {
+  const next = new Set();
+  for (const path of state.expanded) {
+    next.add(
+      isPathWithin(path, oldPath)
+        ? `${newPath}${path.slice(oldPath.length)}`
+        : path
+    );
+  }
+  state.expanded = next;
+}
+
+function remapCurrentFile(oldPath, newPath) {
+  if (!state.currentFile || !isPathWithin(state.currentFile.path, oldPath)) return;
+  state.currentFile.path = `${newPath}${state.currentFile.path.slice(oldPath.length)}`;
+  els.filePath.textContent = state.currentFile.path;
+  updateTitle();
+}
+
+async function movePath(sourcePath, targetParent) {
+  if (state.saving || state.moving) return;
+  if (sourcePath === targetParent || isPathWithin(targetParent, sourcePath)) {
+    setStatus("A folder cannot be moved into itself.");
+    return;
+  }
+  if (parentOf(sourcePath) === targetParent) return;
+  state.moving = true;
+  try {
+    const newPath = await api.moveItem(sourcePath, targetParent);
+    remapExpanded(sourcePath, newPath);
+    remapCurrentFile(sourcePath, newPath);
+    state.selected = newPath;
+    await loadTree();
+    ensureExpanded(newPath);
+    if (findNode(state.tree, newPath)?.isDir) state.expanded.add(newPath);
+    renderTree();
+    await refreshOrganization();
+    setStatus(`Moved ${basename(newPath)}.`);
+  } catch (error) {
+    setStatus(errText(error));
+  } finally {
+    state.moving = false;
+  }
+}
+
 async function editTags(path) {
   const current = (state.tags.get(path) ?? []).join(", ");
   const value = await promptTags(current);
@@ -909,16 +1251,85 @@ async function editTags(path) {
   }
 }
 
+async function showRevisions(path) {
+  try {
+    const revisions = await api.listRevisions(path);
+    els.revisionsCopy.textContent = path;
+    els.revisionsList.textContent = "";
+    els.revisionsEmpty.hidden = revisions.length > 0;
+    for (const revision of revisions) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      const date = document.createElement("span");
+      date.textContent = formatDate(revision.modifiedMs) || revision.id;
+      const size = document.createElement("span");
+      size.textContent = formatBytes(revision.size);
+      button.append(date, size);
+      button.addEventListener("click", async () => {
+        const confirmed = await confirmDialog(
+          `Restore the revision from ${date.textContent}? The current file is saved as a revision first.`,
+          { title: "Restore revision", kind: "warning" }
+        );
+        if (!confirmed) return;
+        if (state.currentFile?.path === path && !(await resolvePendingChanges())) {
+          return;
+        }
+        try {
+          await api.restoreRevision(path, revision.id);
+          if (state.currentFile?.path === path) {
+            await reloadCurrent(true);
+            setNotice("Revision restored.", "info");
+          } else {
+            setStatus("Revision restored.");
+          }
+          els.revisionsDialog.close();
+        } catch (error) {
+          setStatus(errText(error));
+        }
+      });
+      li.append(button);
+      els.revisionsList.append(li);
+    }
+    els.revisionsDialog.showModal();
+  } catch (error) {
+    setStatus(errText(error));
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Files and editor                                                    */
 /* ------------------------------------------------------------------ */
 
-async function canDiscardChanges() {
-  if (!state.dirty) return true;
-  return confirmDialog("Discard unsaved changes in the open file?", {
-    title: "Unsaved changes",
-    kind: "warning",
+function askUnsavedChanges() {
+  return new Promise((resolve) => {
+    const name = state.currentFile ? basename(state.currentFile.path) : "the open file";
+    els.unsavedCopy.textContent = `Save changes to ${name} before continuing?`;
+    els.unsavedDialog.returnValue = "";
+    const onClose = () => {
+      els.unsavedDialog.removeEventListener("close", onClose);
+      resolve(els.unsavedDialog.returnValue || "cancel");
+    };
+    els.unsavedDialog.addEventListener("close", onClose);
+    els.unsavedDialog.showModal();
+    setTimeout(() => els.unsavedSave.focus(), 0);
   });
+}
+
+async function resolvePendingChanges() {
+  if (!state.dirty) return true;
+  clearAutosave();
+  const choice = await askUnsavedChanges();
+  if (choice === "cancel") {
+    scheduleAutosave();
+    return false;
+  }
+  if (choice === "save") {
+    const saved = await saveCurrent();
+    if (!saved) scheduleAutosave();
+    return saved;
+  }
+  return true;
 }
 
 async function openFile(path, line = null) {
@@ -929,9 +1340,18 @@ async function openFile(path, line = null) {
     renderTree();
     return true;
   }
-  if (!(await canDiscardChanges())) return false;
   try {
     const file = await api.readFile(path);
+    if (file.external) {
+      state.selected = path;
+      ensureExpanded(path);
+      renderTree();
+      await api.openExternal(path);
+      await refreshOrganization();
+      setStatus(`Opened ${basename(path)} in its default app.`);
+      return true;
+    }
+    if (!(await resolvePendingChanges())) return false;
     mountFile(file, line);
     ensureExpanded(path);
     state.selected = path;
@@ -957,6 +1377,7 @@ function mountFile(file, line = null) {
     modifiedMs: file.modifiedMs,
   };
   state.dirty = false;
+  state.diskContent = file.content;
   els.emptyState.hidden = true;
   els.editorPane.hidden = false;
   els.fileName.textContent = file.name;
@@ -986,6 +1407,9 @@ function mountFile(file, line = null) {
     onChange: markDirty,
     onSave: saveCurrent,
     onSearch: focusSearch,
+    onOpenLink: (path) => openFile(path),
+    onUndo: undo,
+    onRedo: redo,
   });
   if (line) state.editor.openAtLine(line);
   else state.editor.focus();
@@ -993,10 +1417,13 @@ function mountFile(file, line = null) {
 }
 
 function closeEditor({ silent = false } = {}) {
+  clearAutosave();
+  state.autosavePaused = false;
   state.editor?.destroy();
   state.editor = null;
   state.currentFile = null;
   state.dirty = false;
+  state.diskContent = null;
   els.editor.textContent = "";
   els.editorPane.hidden = true;
   els.fileTags.textContent = "";
@@ -1009,6 +1436,45 @@ function closeEditor({ silent = false } = {}) {
   if (!silent) setStatus("Ready.");
 }
 
+function clearAutosave() {
+  if (state.autosaveTimer !== null) {
+    clearTimeout(state.autosaveTimer);
+    state.autosaveTimer = null;
+  }
+}
+
+function scheduleAutosave() {
+  if (state.autosavePaused || !state.dirty) return;
+  if (
+    state.settings.autosaveMode === "interval" &&
+    state.autosaveTimer !== null
+  ) {
+    return;
+  }
+  clearAutosave();
+  const mode = state.settings.autosaveMode;
+  if (mode === "idle") {
+    const seconds = Math.min(
+      60,
+      Math.max(1, Number(state.settings.autosaveIdleSecs) || 20)
+    );
+    state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
+  } else if (mode === "interval") {
+    const seconds = Math.min(
+      3600,
+      Math.max(120, Number(state.settings.autosaveIntervalSecs) || 120)
+    );
+    state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
+  }
+}
+
+async function runAutosave() {
+  state.autosaveTimer = null;
+  if (state.autosavePaused || !state.dirty) return;
+  const saved = await saveCurrent();
+  if (!saved && state.dirty) scheduleAutosave();
+}
+
 function markDirty() {
   if (!state.currentFile || state.currentFile.readOnly) return;
   if (!state.dirty) {
@@ -1017,15 +1483,28 @@ function markDirty() {
     updateTitle();
     setStatus("Unsaved changes.");
   }
+  scheduleAutosave();
 }
 
 async function saveCurrent() {
-  if (!state.currentFile) return;
+  if (!state.currentFile) return false;
   if (state.currentFile.readOnly) {
     setStatus("This file is read-only.");
-    return;
+    return false;
   }
-  if (state.saving) return;
+  if (state.saving) return false;
+  if (
+    state.editor &&
+    state.diskContent !== null &&
+    state.editor.getValue() === state.diskContent
+  ) {
+    // Nothing changed on screen, so there is nothing to write.
+    state.dirty = false;
+    clearAutosave();
+    updateControls();
+    updateTitle();
+    return true;
+  }
   state.saving = true;
   els.saveButton.disabled = true;
   try {
@@ -1037,7 +1516,10 @@ async function saveCurrent() {
     );
     state.currentFile.size = outcome.size;
     state.currentFile.modifiedMs = outcome.modifiedMs;
+    state.diskContent = state.editor?.getValue() ?? "";
     state.dirty = false;
+    clearAutosave();
+    state.autosavePaused = false;
     els.fileMeta.textContent = [
       state.currentFile.encodingLabel,
       state.currentFile.eolLabel,
@@ -1048,9 +1530,12 @@ async function saveCurrent() {
     updateControls();
     updateTitle();
     setStatus("Saved.");
+    refreshUndoState();
+    return true;
   } catch (error) {
     setNotice(errText(error), "warn");
     setStatus("The file could not be saved.");
+    return false;
   } finally {
     state.saving = false;
     updateControls();
@@ -1096,6 +1581,134 @@ function renderFileTags() {
     });
     els.fileTags.append(button);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Undo and redo                                                       */
+/* ------------------------------------------------------------------ */
+
+async function refreshUndoState() {
+  if (!state.vault) {
+    state.undoInfo = { undoLabel: null, redoLabel: null };
+    updateControls();
+    return;
+  }
+  try {
+    state.undoInfo = await api.undoState();
+  } catch {
+    state.undoInfo = { undoLabel: null, redoLabel: null };
+  }
+  updateControls();
+}
+
+/** Text as it is on disk right now, used as the redo target for an edit. */
+function diskText() {
+  return state.diskContent ?? "";
+}
+
+async function undo() {
+  if (!state.vault || state.undoBusy) return;
+  if (state.currentFile && state.dirty) {
+    if (state.currentFile.readOnly) {
+      setStatus("This file is read-only.");
+      return;
+    }
+    state.undoBusy = true;
+    try {
+      state.editor?.replaceDoc(diskText());
+      state.dirty = false;
+      clearAutosave();
+      state.autosavePaused = false;
+      updateControls();
+      updateTitle();
+      setStatus("Reverted the unsaved edits.");
+      await saveCurrent();
+    } finally {
+      state.undoBusy = false;
+      updateControls();
+    }
+    return;
+  }
+  if (!state.undoInfo.undoLabel) {
+    setStatus("There is nothing to undo.");
+    return;
+  }
+  const before = state.undoInfo.undoLabel;
+  const currentPath = state.currentFile?.path ?? null;
+  state.undoBusy = true;
+  try {
+    const message = await api.undo();
+    await afterUndoStep(currentPath);
+    setStatus(message || `Undid ${before}.`);
+  } catch (error) {
+    setStatus(errText(error));
+    await refreshUndoState();
+  } finally {
+    state.undoBusy = false;
+    updateControls();
+  }
+}
+
+async function redo() {
+  if (!state.vault || state.undoBusy || !state.undoInfo.redoLabel) return;
+  const currentPath = state.currentFile?.path ?? null;
+  state.undoBusy = true;
+  try {
+    const message = await api.redo();
+    await afterUndoStep(currentPath);
+    setStatus(message);
+  } catch (error) {
+    setStatus(errText(error));
+  } finally {
+    state.undoBusy = false;
+    updateControls();
+  }
+}
+
+/** Bring the tree, the open editor and the organization lists back in step
+ *  with the vault after a step was undone or redone. */
+async function afterUndoStep(previousPath) {
+  await loadTree();
+  await refreshOrganization();
+  await refreshUndoState();
+  await syncEditorWithDisk(previousPath);
+}
+
+async function syncEditorWithDisk(previousPath) {
+  if (!state.currentFile) return;
+  const path = state.currentFile.path;
+  const found = findNode(state.tree, path);
+  if (!found) {
+    // The undo may have given the item back under a different name.
+    const restored =
+      previousPath && findNode(state.tree, previousPath) ? previousPath : null;
+    if (restored) {
+      await openFile(restored);
+    } else {
+      closeEditor({ silent: true });
+      setStatus("The open file is no longer in the vault.");
+    }
+    return;
+  }
+  if (found.isDir) return;
+  try {
+    const file = await api.readFile(path);
+    state.diskContent = file.content;
+    if (state.dirty || file.external) return;
+    if ((state.editor?.getValue() ?? "") !== file.content) {
+      const line = state.editor
+        ? state.editor.view.state.doc.lineAt(state.editor.view.state.selection.main.head)
+            .number
+        : null;
+      mountFile(file, line);
+    }
+  } catch (error) {
+    setStatus(errText(error));
+    return;
+  }
+  state.selected = path;
+  ensureExpanded(path);
+  renderTree();
 }
 
 function toggleWrap() {
@@ -1229,8 +1842,21 @@ function promptTags(initial) {
 function openSettings() {
   els.settingTheme.value = state.settings.theme ?? "system";
   els.settingFontFamily.value = state.settings.fontFamily ?? "Consolas";
-  els.settingFontSize.value = String(state.settings.fontSize ?? 14);
+  // Show the size actually in use, so a manual zoom is visible here too.
+  els.settingFontSize.value = String(editorFontSize());
   els.settingTabWidth.value = String(state.settings.tabWidth ?? 4);
+  els.settingPinnedLimit.value = String(state.settings.pinnedLimit ?? 5);
+  els.settingRecentLimit.value = String(state.settings.recentLimit ?? 5);
+  els.settingAutosaveMode.value = state.settings.autosaveMode ?? "off";
+  els.settingAutosaveIdle.value = String(state.settings.autosaveIdleSecs ?? 20);
+  els.settingAutosaveInterval.value = String(
+    state.settings.autosaveIntervalSecs ?? 120
+  );
+  els.settingRevisionHourly.value = String(state.settings.revisionHourly ?? 24);
+  els.settingRevisionDaily.value = String(state.settings.revisionDaily ?? 7);
+  els.settingRevisionWeekly.value = String(state.settings.revisionWeekly ?? 4);
+  els.settingRevisionMonthly.value = String(state.settings.revisionMonthly ?? 12);
+  els.settingRevisionYearly.value = String(state.settings.revisionYearly ?? 100);
   els.settingSort.value = state.settings.defaultSort ?? "name";
   state.settingsDraftVault = state.settings.defaultVault ?? null;
   els.settingDefaultVault.value = state.settingsDraftVault ?? "";
@@ -1250,12 +1876,53 @@ async function saveSettingsFromForm() {
       16,
       Math.max(1, Math.round(Number(els.settingTabWidth.value) || 4))
     ),
+    pinnedLimit: Math.min(
+      100,
+      Math.max(1, Math.round(Number(els.settingPinnedLimit.value) || 5))
+    ),
+    recentLimit: Math.min(
+      100,
+      Math.max(1, Math.round(Number(els.settingRecentLimit.value) || 5))
+    ),
+    autosaveMode: els.settingAutosaveMode.value,
+    autosaveIdleSecs: Math.min(
+      60,
+      Math.max(1, Math.round(Number(els.settingAutosaveIdle.value) || 20))
+    ),
+    autosaveIntervalSecs: Math.min(
+      3600,
+      Math.max(120, Math.round(Number(els.settingAutosaveInterval.value) || 120))
+    ),
+    revisionHourly: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(els.settingRevisionHourly.value) || 0))
+    ),
+    revisionDaily: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(els.settingRevisionDaily.value) || 0))
+    ),
+    revisionWeekly: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(els.settingRevisionWeekly.value) || 0))
+    ),
+    revisionMonthly: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(els.settingRevisionMonthly.value) || 0))
+    ),
+    revisionYearly: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(els.settingRevisionYearly.value) || 0))
+    ),
     defaultSort: els.settingSort.value,
     defaultVault: state.settingsDraftVault,
+    desktopShortcutPrompted: Boolean(state.settings.desktopShortcutPrompted),
   };
   try {
     const saved = await api.saveSettings(settings);
     els.settingsDialog.close();
+    // A saved font size takes over from any manual zoom.
+    state.zoom = null;
+    saveZoom();
     applySettings(saved);
     await loadTree();
     setStatus("Settings saved.");
@@ -1265,11 +1932,100 @@ async function saveSettingsFromForm() {
   }
 }
 
+async function offerDesktopShortcut() {
+  let status;
+  try {
+    status = await api.desktopShortcutStatus();
+  } catch {
+    return;
+  }
+  if (!status.supported || status.prompted || status.exists) return;
+  const create = await confirmDialog("Create a Plainfold shortcut on the Desktop?", {
+    title: "Desktop shortcut",
+    kind: "info",
+  });
+  try {
+    await api.resolveDesktopShortcut(create);
+    if (create) setStatus("Desktop shortcut created.");
+  } catch (error) {
+    setNotice(errText(error), "warn");
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Events                                                              */
 /* ------------------------------------------------------------------ */
 
+function wirePaneResizer() {
+  let dragging = false;
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing");
+    saveSidebarWidth();
+  };
+  const updateFromPointer = (event) => {
+    const left = els.layout.getBoundingClientRect().left;
+    applySidebarWidth(event.clientX - left);
+  };
+
+  els.paneResizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    dragging = true;
+    els.paneResizer.setPointerCapture(event.pointerId);
+    document.body.classList.add("resizing");
+    event.preventDefault();
+  });
+  els.paneResizer.addEventListener("pointermove", (event) => {
+    if (dragging) updateFromPointer(event);
+  });
+  els.paneResizer.addEventListener("pointerup", finish);
+  els.paneResizer.addEventListener("pointercancel", finish);
+  els.paneResizer.addEventListener("lostpointercapture", finish);
+  window.addEventListener("blur", finish);
+  els.paneResizer.addEventListener("dblclick", () => {
+    applySidebarWidth(SIDEBAR_DEFAULT);
+    saveSidebarWidth();
+  });
+  els.paneResizer.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const delta = event.key === "ArrowLeft" ? -10 : 10;
+    applySidebarWidth(state.sidebarWidth + delta);
+    saveSidebarWidth();
+  });
+}
+
+function wireRootDrop(element) {
+  element.addEventListener("dragover", (event) => {
+    if (
+      !state.dragSource?.parent ||
+      event.target.closest?.(".tree-row")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    element.classList.add("drop-root");
+  });
+  element.addEventListener("dragleave", (event) => {
+    if (event.target === element) element.classList.remove("drop-root");
+  });
+  element.addEventListener("drop", async (event) => {
+    if (event.target.closest?.(".tree-row")) return;
+    event.preventDefault();
+    const source = state.dragSource;
+    element.classList.remove("drop-root");
+    els.rootDropZone.hidden = true;
+    if (source) await movePath(source.path, "");
+  });
+}
+
 function wireEvents() {
+  wirePaneResizer();
+  // The editor sits inside the pane, and wheel events bubble, so one
+  // listener on the pane covers the whole editing area.
+  wireZoom(els.editorPane);
   els.openVault.addEventListener("click", chooseVault);
   els.emptyOpen.addEventListener("click", () => {
     if (state.vault) createItem(targetFolder(), false);
@@ -1325,10 +2081,14 @@ function wireEvents() {
   els.tagsCancel.addEventListener("click", () => els.tagsDialog.close("cancel"));
   els.settingsCancel.addEventListener("click", () => els.settingsDialog.close("cancel"));
 
+  els.sortAlpha.addEventListener("click", () => sortAlphabetically(targetFolder()));
   els.newFile.addEventListener("click", () => createItem(targetFolder(), false));
   els.newFolder.addEventListener("click", () => createItem(targetFolder(), true));
   els.wrapToggle.addEventListener("click", toggleWrap);
   els.saveButton.addEventListener("click", saveCurrent);
+  els.undoButton.addEventListener("click", undo);
+  els.redoButton.addEventListener("click", redo);
+  els.noticeClose.addEventListener("click", dismissNotice);
 
   els.tree.addEventListener("contextmenu", (event) => {
     if (event.target === els.tree) {
@@ -1336,7 +2096,29 @@ function wireEvents() {
       showContextMenu(event.clientX, event.clientY, null);
     }
   });
+  els.sidebar.addEventListener("contextmenu", (event) => {
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    showContextMenu(event.clientX, event.clientY, null);
+  });
   els.tree.addEventListener("keydown", handleTreeKeydown);
+  els.treeFilter.addEventListener("input", () => {
+    state.fileFilter = els.treeFilter.value.trim();
+    renderTree();
+    updateControls();
+  });
+  els.treeFilter.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      els.treeFilter.value = "";
+      state.fileFilter = "";
+      renderTree();
+      updateControls();
+    }
+  });
+  wireRootDrop(els.tree);
+  wireRootDrop(els.rootDropZone);
+  wireRootDrop(els.sidebarFooter);
+  wireRootDrop(els.treeEmpty);
 
   els.search.addEventListener("input", () => {
     clearTimeout(state.searchTimer);
@@ -1416,11 +2198,35 @@ function wireEvents() {
     } else if (event.key === "Escape") {
       hideContextMenu();
       if (!els.searchResults.hidden) hideResults();
+      else dismissNotice();
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       if (state.currentFile) {
         event.preventDefault();
         saveCurrent();
       }
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      // The editor handles its own history first and only lets this run once
+      // that history is empty, so vault steps are undone from anywhere.
+      const typing =
+        els.treeFilter === document.activeElement ||
+        els.search === document.activeElement ||
+        els.promptInput === document.activeElement ||
+        els.tagsInput === document.activeElement;
+      if (typing) return;
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      const typing =
+        els.treeFilter === document.activeElement ||
+        els.search === document.activeElement;
+      if (typing) return;
+      event.preventDefault();
+      redo();
+    } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
+      // Screen readers and browsers use Ctrl+0 for "actual size" too.
+      event.preventDefault();
+      resetZoom();
     }
   });
   window.addEventListener("resize", hideContextMenu);
@@ -1429,15 +2235,9 @@ function wireEvents() {
   const appWindow = getCurrentWindow();
   appWindow
     .onCloseRequested(async (event) => {
-      if (state.dirty) {
-        const discard = await confirmDialog(
-          "Discard unsaved changes and close Plainfold?",
-          { title: "Unsaved changes", kind: "warning" }
-        );
-        if (!discard) {
-          event.preventDefault();
-          return;
-        }
+      if (!(await resolvePendingChanges())) {
+        event.preventDefault();
+        return;
       }
       try {
         await appWindow.destroy();
@@ -1452,17 +2252,37 @@ function wireEvents() {
     const paths = event.payload?.paths ?? [];
     await loadTree();
     await refreshOrganization();
-    if (!state.currentFile) return;
+    if (state.moving || !state.currentFile) return;
     const current = state.currentFile.path;
     const affected = paths.some(
       (path) => path === current || current.startsWith(`${path}/`)
     );
     if (!affected) return;
+
+    // Watchers report metadata touches (sync clients, backup tools, editors
+    // that rewrite on read) as changes. Compare the text on disk before
+    // saying anything, so only a real edit counts.
+    const onDisk = await readDiskText(current);
+    if (!contentChangedSince(onDisk, state.diskContent)) {
+      // Nothing actually changed. Unsaved edits are no longer at risk of
+      // being overwritten, so autosave can resume.
+      if (state.dirty && state.autosavePaused) {
+        state.autosavePaused = false;
+        scheduleAutosave();
+      }
+      return;
+    }
+
     if (state.dirty) {
-      setNotice(
-        "This file changed on disk. Your unsaved edits are kept; save when ready.",
-        "warn"
-      );
+      // Pausing again is idempotent; only warn when the message is not
+      // already on screen, so a dismissed warning stays dismissed.
+      state.autosavePaused = true;
+      clearAutosave();
+      const warning =
+        "This file changed on disk. Your unsaved edits are kept; save when ready.";
+      if (els.notice.hidden || els.noticeText.textContent !== warning) {
+        setNotice(warning, "warn");
+      }
     } else {
       await reloadCurrent(true);
       setNotice("This file changed on disk and was reloaded.", "info");
@@ -1470,9 +2290,22 @@ function wireEvents() {
   }).catch(() => {});
 }
 
+/** Text currently on disk, or null when it cannot be read or is not text. */
+async function readDiskText(path) {
+  try {
+    const file = await api.readFile(path);
+    if (file.external) return null;
+    return file.content;
+  } catch {
+    return null;
+  }
+}
+
 async function init() {
   wireEvents();
+  state.zoom = loadZoom();
   applyTheme();
+  applySidebarWidth(loadSidebarWidth());
   updateControls();
   try {
     const snapshot = await api.bootstrap();
@@ -1481,6 +2314,7 @@ async function init() {
     if (snapshot.notices?.length) {
       handleNotices(snapshot.notices);
     }
+    await offerDesktopShortcut();
   } catch (error) {
     setStatus(errText(error));
   }

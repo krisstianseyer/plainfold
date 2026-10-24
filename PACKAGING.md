@@ -15,8 +15,8 @@ npm run tauri build
 Results:
 
 - `src-tauri/target/release/plainfold.exe`
-- `src-tauri/target/release/bundle/nsis/Plainfold_0.1.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/Plainfold_0.1.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/Plainfold_<version>_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/Plainfold_<version>_x64_en-US.msi`
 
 `bundle.targets` is `"all"`, so Tauri produces the formats supported on the host. Windows produces NSIS and MSI. Both were install-tested; NSIS remains the default per-user installer for the checklist below.
 
@@ -26,8 +26,9 @@ Install test checklist:
 2. Confirm the installer shows Plainfold and the page-with-cursor icon.
 3. Launch from the Start menu. The window title is Plainfold.
 4. Confirm the taskbar icon is the page-with-cursor icon.
-5. Open a vault, create a file, type text, save with Ctrl+S, close, and reopen. The text is still on disk.
-6. Confirm no network access is requested.
+5. Confirm the Start Menu entry. For MSI, confirm the Desktop shortcut. For NSIS, confirm the finish-page Desktop shortcut option is checked by default.
+6. Open a vault, create a file, type text, save with Ctrl+S, close, and reopen. The text is still on disk.
+7. Confirm no network access is requested.
 
 ## Debian family (Debian, Ubuntu, Mint, Pop! OS)
 
@@ -47,16 +48,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build -- --bundles deb
 ```
 
-Result: `src-tauri/target/release/bundle/deb/plainfold_0.1.0_amd64.deb`
+Result: `src-tauri/target/release/bundle/deb/plainfold_<version>_amd64.deb`
 
 Install test:
 
 ```sh
-sudo dpkg -i src-tauri/target/release/bundle/deb/plainfold_0.1.0_amd64.deb
+sudo dpkg -i src-tauri/target/release/bundle/deb/plainfold_<version>_amd64.deb
 plainfold
 ```
 
-Then repeat the open/create/edit/save checklist. Remove with `sudo apt remove plainfold`.
+On first launch, accept the Desktop shortcut prompt and confirm `Plainfold.desktop` appears on the Desktop. Decline on a later clean-profile run and confirm the app does not ask again. Confirm the application-menu entry exists. Then repeat the open/create/edit/save checklist. Remove with `sudo apt remove plainfold`.
 
 ## Fedora and Red Hat family (Fedora, RHEL, Rocky, AlmaLinux)
 
@@ -75,16 +76,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build -- --bundles rpm
 ```
 
-Result: `src-tauri/target/release/bundle/rpm/plainfold-0.1.0-1.x86_64.rpm`
+Result: `src-tauri/target/release/bundle/rpm/plainfold-<version>-1.x86_64.rpm`
 
 Install test:
 
 ```sh
-sudo dnf install ./src-tauri/target/release/bundle/rpm/plainfold-0.1.0-1.x86_64.rpm
+sudo dnf install ./src-tauri/target/release/bundle/rpm/plainfold-<version>-1.x86_64.rpm
 plainfold
 ```
 
-Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
+On first launch, accept the Desktop shortcut prompt and confirm `Plainfold.desktop` appears on the Desktop. Decline on a later clean-profile run and confirm the app does not ask again. Confirm the application-menu entry exists. Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
 
 ## CI
 
@@ -100,8 +101,9 @@ Artifacts are uploaded per job. A release is only complete after the Windows, De
 
 This build was verified as follows:
 
-- Windows: NSIS and MSI install, launch, and uninstall passed.
+- Windows: NSIS and MSI install, launch, and uninstall passed. NSIS was rebuilt after the desktop-shortcut change; its finish-page Desktop shortcut option is checked by default.
 - Ubuntu 24.04 WSL (Debian family): `npm run tauri build -- --bundles deb` produced the package; `apt` install, `ldd` missing-library check, and removal passed.
+- Ubuntu 24.04 WSL: 57 unit tests and 9 integration tests pass, including Linux XDG desktop-shortcut parsing, file creation, drag-move index migration, and GFS revision history. The `.deb`/`.rpm` artifacts need a rebuild and a real desktop-session prompt test.
 - `.rpm`: `npm run tauri build -- --bundles rpm` invoked `rpmbuild` from the same source; digest, metadata, dependencies, and file list were inspected. The Fedora CI job installs the RPM; launching it on a Fedora desktop remains a VM step.
 
 ## Icons

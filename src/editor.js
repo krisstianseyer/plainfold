@@ -1,5 +1,5 @@
 import { basicSetup } from "codemirror";
-import { indentWithTab } from "@codemirror/commands";
+import { indentWithTab, redo, undo } from "@codemirror/commands";
 import { StreamLanguage, indentUnit } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
@@ -10,6 +10,8 @@ import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { xml } from "@codemirror/lang-xml";
+
+import { linkAt } from "./link-utils.js";
 
 function languageFor(path) {
   const name = (path ?? "").toLowerCase();
@@ -53,6 +55,9 @@ export function createEditor({
   onChange = () => {},
   onSave = () => {},
   onSearch = () => {},
+  onOpenLink = () => {},
+  onUndo = () => false,
+  onRedo = () => false,
 }) {
   const wrapCompartment = new Compartment();
   const themeCompartment = new Compartment();
@@ -77,6 +82,23 @@ export function createEditor({
           return true;
         },
       },
+      {
+        // Undo falls through to the rest of the app once the editor's own
+        // history runs out, so vault steps can be undone from here too.
+        key: "Mod-z",
+        preventDefault: true,
+        run: (view) => (undo(view) ? true : onUndo() || true),
+      },
+      {
+        key: "Mod-y",
+        preventDefault: true,
+        run: (view) => (redo(view) ? true : onRedo() || true),
+      },
+      {
+        key: "Mod-Shift-z",
+        preventDefault: true,
+        run: (view) => (redo(view) ? true : onRedo() || true),
+      },
     ])
   );
 
@@ -85,6 +107,19 @@ export function createEditor({
     extensions: [
       basicSetup,
       shortcuts,
+      EditorView.domEventHandlers({
+        mousedown(event, view) {
+          if (event.button !== 0 || !(event.ctrlKey || event.metaKey)) return false;
+          const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+          if (position === null) return false;
+          const line = view.state.doc.lineAt(position);
+          const link = linkAt(line.text, position - line.from);
+          if (!link) return false;
+          event.preventDefault();
+          onOpenLink(link.path);
+          return true;
+        },
+      }),
       keymap.of([indentWithTab]),
       languageFor(path),
       tabCompartment.of([
@@ -135,6 +170,20 @@ export function createEditor({
           EditorView.editable.of(!value),
         ]),
       });
+    },
+    replaceDoc(text) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: text },
+        selection: { anchor: 0 },
+        scrollIntoView: true,
+      });
+    },
+    selection() {
+      const { from, to, head } = view.state.selection.main;
+      return { from, to, head };
+    },
+    hasFocus() {
+      return view.hasFocus;
     },
     openAtLine(line) {
       const target = Math.min(Math.max(Number(line) || 1, 1), view.state.doc.lines);
