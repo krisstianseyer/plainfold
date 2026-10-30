@@ -9,7 +9,7 @@
   <body>
     <div id="app" class="app">
       <header class="topbar" data-tauri-drag-region>
-        <div class="brand-wrap">
+        <div class="brand-wrap" data-feature="about about.brand">
           <button id="brand-button" class="brand" type="button" aria-label="Plainfold" aria-haspopup="dialog" aria-expanded="false" title="About Plainfold">
             <span class="brand-mark" aria-hidden="true"><span class="brand-cursor"></span></span>
             <span class="brand-name">Plainfold</span>
@@ -17,8 +17,8 @@
           <div id="brand-popover" class="brand-popover" role="dialog" aria-label="About Plainfold" hidden>
             <strong>Plainfold</strong>
             <div class="brand-meta">
-              <span id="app-version" class="brand-version"></span>
-              <span id="repo-link" class="repo-link" title="GitHub repository URL not configured" aria-disabled="true">
+              <span id="app-version" class="brand-version" data-feature="about about.version"></span>
+              <span id="repo-link" class="repo-link" title="GitHub repository URL not configured" aria-disabled="true" data-feature="about about.githubLink">
                 <svg class="repo-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
                   <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
                 </svg>
@@ -31,7 +31,7 @@
         <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
         <div class="toolbar">
           <button id="open-repository" class="button primary" type="button">Open Repository</button>
-          <div class="search-wrap">
+          <div class="search-wrap" data-feature="search search.toolbar">
             <input
               id="search"
               class="search-input"
@@ -42,11 +42,10 @@
               aria-label="Search file names and contents"
               aria-controls="search-results"
             />
-            <kbd class="search-key">Ctrl F</kbd>
+            <kbd class="search-key" data-feature="search search.shortcut">Ctrl F</kbd>
           </div>
-          <button id="undo-button" class="button" type="button" title="Undo (Ctrl+Z)">Undo</button>
-          <button id="redo-button" class="button" type="button" title="Redo (Ctrl+Y)">Redo</button>
-          <button id="rescan" class="button" type="button" title="Rebuild the search index">Rescan</button>
+          <button id="undo-button" class="button" type="button" title="Undo (Ctrl+Z)" data-feature="repositoryUndo repositoryUndo.buttons">Undo</button>
+          <button id="redo-button" class="button" type="button" title="Redo (Ctrl+Y)" data-feature="repositoryUndo repositoryUndo.buttons">Redo</button>
           <button id="settings-button" class="button" type="button">Settings</button>
         </div>
         <div class="window-controls">
@@ -62,10 +61,24 @@
         </div>
       </header>
 
+      <div id="update-banner" class="update-banner" role="status" aria-live="polite" data-feature="updates updates.banner" hidden>
+        <span id="update-banner-text" class="update-banner-text"></span>
+        <div class="update-banner-actions">
+          <button id="update-banner-notes" class="button small" type="button">Release notes</button>
+          <button id="update-banner-dismiss" class="button small" type="button">Dismiss</button>
+        </div>
+      </div>
+
       <main class="layout">
         <aside class="sidebar" aria-label="Repository navigation">
           <div class="sidebar-scroll">
-            <section class="side-section">
+            <section id="repositories-section" class="side-section" data-feature="recentRepositories recentRepositories.section">
+              <div class="section-head">
+                <h2 class="side-title">Repositories</h2>
+              </div>
+              <ul id="repository-list" class="short-list repository-list" aria-label="Saved repositories"></ul>
+            </section>
+            <section class="side-section" data-feature="pinned pinned.section">
               <div class="section-head">
                 <button
                   id="pinned-title"
@@ -77,7 +90,7 @@
               </div>
               <ul id="pinned-list" class="short-list"></ul>
             </section>
-            <section class="side-section">
+            <section class="side-section" data-feature="recentFiles recentFiles.section">
               <div class="section-head">
                 <button
                   id="recent-title"
@@ -93,13 +106,13 @@
               <div class="section-head">
                 <h2 id="repository-label" class="side-title">Repository</h2>
                 <div class="tree-actions">
-                  <button id="sort-alpha" class="icon-button" type="button" title="Sort alphabetically">A-Z</button>
-                  <button id="new-file" class="icon-button" type="button" title="New file">+ File</button>
-                  <button id="new-folder" class="icon-button" type="button" title="New folder">+ Folder</button>
+                  <button id="sort-alpha" class="icon-button" type="button" title="Sort alphabetically" data-feature="sortAndOrder sortAndOrder.sortButton">A-Z</button>
+                  <button id="new-file" class="icon-button" type="button" title="New file" data-feature="createDelete createDelete.newFile">+ File</button>
+                  <button id="new-folder" class="icon-button" type="button" title="New folder" data-feature="createDelete createDelete.newFolder">+ Folder</button>
                 </div>
               </div>
-              <div id="tag-filter" class="tag-filter"></div>
-              <div class="tree-filter">
+              <div id="tag-filter" class="tag-filter" data-feature="tags tags.filterBar"></div>
+              <div class="tree-filter" data-feature="treeFilter treeFilter.input">
                 <input
                   id="tree-filter"
                   class="tree-filter-input"
@@ -142,7 +155,7 @@
             </div>
           </div>
 
-          <div id="search-results" class="search-results" role="dialog" aria-label="Search results" hidden>
+          <div id="search-results" class="search-results" role="dialog" aria-label="Search results" data-feature="search search.results" hidden>
             <div class="results-head">
               <h2>Search results</h2>
               <button id="close-results" class="icon-button" type="button">Close</button>
@@ -155,6 +168,7 @@
             <div class="paper" aria-hidden="true"><span class="paper-cursor"></span></div>
             <h1>Plain text, plain files.</h1>
             <p>Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.</p>
+            <ul id="welcome-repositories" class="short-list repository-list welcome-repositories" aria-label="Saved repositories" data-feature="recentRepositories recentRepositories.welcomeList"></ul>
             <button id="empty-open" class="button primary" type="button">Open a folder</button>
           </div>
 
@@ -165,12 +179,12 @@
                 <span id="file-path-tip" class="file-path-tip" role="tooltip"></span>
               </div>
               <div class="file-actions">
-                <button id="wrap-toggle" class="button small" type="button" aria-pressed="false">Wrap off</button>
+                <button id="wrap-toggle" class="button small" type="button" aria-pressed="false" data-feature="wrap wrap.toggle">Wrap off</button>
                 <button id="save-button" class="button small primary" type="button">Save</button>
                 <button id="close-file" class="button small" type="button" title="Close (Ctrl+W)" aria-label="Close file">Close</button>
               </div>
             </div>
-            <div id="file-tags" class="file-tags"></div>
+            <div id="file-tags" class="file-tags" data-feature="tags tags.editor"></div>
             <div id="notice" class="notice" role="status" aria-live="polite" hidden>
               <span id="notice-text" class="notice-text"></span>
               <button id="notice-close" class="notice-close" type="button" title="Dismiss (Esc)" aria-label="Dismiss message">×</button>
@@ -181,11 +195,11 @@
       </main>
 
       <footer class="statusbar">
-        <span id="status-left"></span>
+        <span id="status-left" data-feature="repositoryCounts repositoryCounts.statusCounts"></span>
         <span class="status-center">
           <span id="status-message" class="status-message" role="status" aria-live="polite" hidden></span>
         </span>
-        <span id="status-right"></span>
+        <span id="status-right" data-feature="editorStats editorStats.statusWords"></span>
       </footer>
     </div>
 
@@ -274,95 +288,296 @@
     </dialog>
 
     <dialog id="settings-dialog" class="dialog settings-dialog" aria-labelledby="settings-title">
-      <form id="settings-form" method="dialog">
-        <h2 id="settings-title">Settings</h2>
-        <div class="settings-grid">
-          <label class="field" title="Choose a color theme, or follow the operating system.">
-            <span>Theme</span>
-            <select id="setting-theme">
-              <option value="system">Follow the system</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="sepia">Sepia</option>
-              <option value="nord">Nord</option>
-              <option value="solarized-light">Solarized Light</option>
-              <option value="solarized-dark">Solarized Dark</option>
-              <option value="midnight">Midnight</option>
-              <option value="forest">Forest</option>
-            </select>
-          </label>
-          <label class="field" title="Font family used by the editor.">
-            <span>Font family</span>
-            <input id="setting-font-family" type="text" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="field" title="Editor font size in pixels. Range 8-48.">
-            <span>Font size</span>
-            <input id="setting-font-size" type="number" min="8" max="48" step="1" />
-          </label>
-          <label class="field" title="Number of spaces inserted by Tab. Range 1-16.">
-            <span>Tab width</span>
-            <input id="setting-tab-width" type="number" min="1" max="16" step="1" />
-          </label>
-          <label class="field" title="Autosave only runs while the open file has unsaved changes. Off, after idle, or fixed interval.">
-            <span>Autosave</span>
-            <select id="setting-autosave-mode">
-              <option value="off">Off</option>
-              <option value="idle">After idle</option>
-              <option value="interval">On interval</option>
-            </select>
-          </label>
-          <label class="field" title="Seconds to wait after the last edit before autosaving. Range 1-60.">
-            <span>Autosave idle seconds</span>
-            <input id="setting-autosave-idle" type="number" min="1" max="60" step="1" />
-          </label>
-          <label class="field" title="Maximum seconds between autosaves while the file is dirty. Range 120-3600.">
-            <span>Autosave interval seconds</span>
-            <input id="setting-autosave-interval" type="number" min="120" max="3600" step="1" />
-          </label>
-          <label class="field" title="GFS hourly tier. Keeps the newest revision from each of the last N hours that have revisions. 0 disables. Range 0-1000.">
-            <span>Revisions: hourly</span>
-            <input id="setting-revision-hourly" type="number" min="0" max="1000" step="1" />
-          </label>
-          <label class="field" title="GFS daily tier. Keeps the newest revision from each of the last N days that have revisions. 0 disables. Range 0-1000.">
-            <span>Revisions: daily</span>
-            <input id="setting-revision-daily" type="number" min="0" max="1000" step="1" />
-          </label>
-          <label class="field" title="GFS weekly tier. Keeps the newest revision from each of the last N ISO weeks that have revisions. 0 disables. Range 0-1000.">
-            <span>Revisions: weekly</span>
-            <input id="setting-revision-weekly" type="number" min="0" max="1000" step="1" />
-          </label>
-          <label class="field" title="GFS monthly tier. Keeps the newest revision from each of the last N months that have revisions. 0 disables. Range 0-1000.">
-            <span>Revisions: monthly</span>
-            <input id="setting-revision-monthly" type="number" min="0" max="1000" step="1" />
-          </label>
-          <label class="field" title="GFS yearly tier. Keeps the newest revision from each of the last N years that have revisions. 0 disables. Range 0-1000.">
-            <span>Revisions: yearly</span>
-            <input id="setting-revision-yearly" type="number" min="0" max="1000" step="1" />
-          </label>
-          <label class="field" title="Default ordering for folders and files in the repository tree.">
-            <span>Default sort order</span>
-            <select id="setting-sort">
-              <option value="name">Name</option>
-              <option value="modified">Modified date</option>
-              <option value="size">Size</option>
-            </select>
-          </label>
-          <label class="field wide" title="Folder opened automatically at launch.">
-            <span>Default repository folder</span>
-            <div class="inline-field">
-              <input id="setting-default-repository" type="text" readonly />
-              <button id="choose-default-repository" class="button" type="button">Choose</button>
-              <button id="use-current-repository" class="button" type="button">Use current</button>
-              <button id="clear-default-repository" class="button" type="button">Clear</button>
-            </div>
-          </label>
+      <div class="settings-shell">
+        <header class="settings-header">
+          <div class="settings-heading">
+            <h2 id="settings-title">Settings</h2>
+            <p class="settings-subtitle">Changes save automatically.</p>
+          </div>
+          <div class="settings-header-tools">
+            <span id="settings-saved" class="settings-saved" role="status" aria-live="polite" hidden>Saved</span>
+            <input
+              id="settings-search"
+              class="settings-search"
+              type="search"
+              placeholder="Search settings"
+              aria-label="Search settings"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="settings-close" class="button" type="button">Close</button>
+          </div>
+        </header>
+
+        <div class="settings-body">
+          <nav class="settings-nav" aria-label="Settings categories" role="tablist" aria-orientation="vertical">
+            <button id="settings-tab-appearance" class="settings-nav-item" type="button" role="tab" aria-selected="true" aria-controls="settings-panel-appearance" data-settings-category="appearance">Appearance</button>
+            <button id="settings-tab-editor" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-editor" data-settings-category="editor">Editor</button>
+            <button id="settings-tab-sidebar" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-sidebar" data-settings-category="sidebar">Sidebar &amp; Tree</button>
+            <button id="settings-tab-search" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-search" data-settings-category="search">Search</button>
+            <button id="settings-tab-repositories" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-repositories" data-settings-category="repositories">Repositories</button>
+            <button id="settings-tab-updates" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-updates" data-settings-category="updates" data-feature="updates updates.settingsSection">Updates</button>
+            <button id="settings-tab-features" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-features" data-settings-category="features">Features</button>
+            <button id="settings-tab-maintenance" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-maintenance" data-settings-category="maintenance">Maintenance</button>
+            <button id="settings-tab-about" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-about" data-settings-category="about">About</button>
+          </nav>
+
+          <div class="settings-panels">
+            <p id="settings-no-match" class="settings-no-match muted" hidden>No settings match</p>
+
+            <section id="settings-panel-appearance" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-appearance" data-settings-panel="appearance">
+              <div class="settings-panel-head">
+                <h3>Appearance</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="appearance">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Theme" data-settings-help="Choose a color theme, or follow the operating system.">
+                <label class="settings-label" for="setting-theme">Theme</label>
+                <select id="setting-theme">
+                  <option value="system">Follow the system</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                  <option value="sepia">Sepia</option>
+                  <option value="nord">Nord</option>
+                  <option value="solarized-light">Solarized Light</option>
+                  <option value="solarized-dark">Solarized Dark</option>
+                  <option value="midnight">Midnight</option>
+                  <option value="forest">Forest</option>
+                </select>
+                <p class="settings-help">"Follow the system" switches with your operating system theme.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Font family" data-settings-help="Font family used by the editor.">
+                <label class="settings-label" for="setting-font-family">Font family</label>
+                <input id="setting-font-family" type="text" autocomplete="off" spellcheck="false" />
+                <p class="settings-help">Any font installed on this computer.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Font size" data-settings-help="Editor font size in pixels. Range 8-48.">
+                <label class="settings-label" for="setting-font-size">Font size</label>
+                <input id="setting-font-size" type="number" min="8" max="48" step="1" />
+                <p class="settings-help">Pixels, from 8 to 48.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Editor zoom" data-settings-help="Reset manual Ctrl+wheel zoom to the font size set above.">
+                <span class="settings-label">Editor zoom</span>
+                <div class="inline-field">
+                  <span id="settings-zoom-value" class="settings-value"></span>
+                  <button id="reset-editor-zoom" class="button" type="button" data-feature="zoom zoom.resetShortcut">Reset zoom</button>
+                </div>
+                <p class="settings-help">Ctrl+wheel changes the zoom while editing. Reset returns to the font size.</p>
+              </div>
+            </section>
+
+            <section id="settings-panel-editor" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-editor" data-settings-panel="editor" hidden>
+              <div class="settings-panel-head">
+                <h3>Editor</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="editor">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Tab width" data-settings-help="Number of spaces inserted by Tab. Range 1-16.">
+                <label class="settings-label" for="setting-tab-width">Tab width</label>
+                <input id="setting-tab-width" type="number" min="1" max="16" step="1" />
+                <p class="settings-help">Spaces inserted by Tab, from 1 to 16.</p>
+              </div>
+              <fieldset class="settings-group" data-feature="autosave autosave.settings">
+                <legend>Autosave</legend>
+                <p class="settings-help">Autosave only runs while the open file has unsaved changes.</p>
+                <div class="settings-field" data-settings-label="Autosave mode" data-settings-help="Off, after idle, or a fixed interval.">
+                  <label class="settings-label" for="setting-autosave-mode">Mode</label>
+                  <select id="setting-autosave-mode">
+                    <option value="off">Off</option>
+                    <option value="idle">After idle</option>
+                    <option value="interval">On interval</option>
+                  </select>
+                </div>
+                <div class="settings-field" data-settings-label="Autosave idle seconds" data-settings-help="Seconds to wait after the last edit before autosaving. Range 1-60.">
+                  <label class="settings-label" for="setting-autosave-idle">Idle seconds</label>
+                  <input id="setting-autosave-idle" type="number" min="1" max="60" step="1" />
+                </div>
+                <div class="settings-field" data-settings-label="Autosave interval seconds" data-settings-help="Maximum seconds between autosaves while the file is dirty. Range 120-3600.">
+                  <label class="settings-label" for="setting-autosave-interval">Interval seconds</label>
+                  <input id="setting-autosave-interval" type="number" min="120" max="3600" step="1" />
+                </div>
+              </fieldset>
+              <fieldset class="settings-group" data-feature="revisions revisions.settings">
+                <legend>Revision retention</legend>
+                <p class="settings-help">0 disables a tier. Existing revisions are never deleted when a feature is turned off.</p>
+                <div class="settings-grid">
+                  <div class="settings-field" data-settings-label="Revisions hourly" data-settings-help="Keep the newest revision from each of the last N hours. Range 0-1000.">
+                    <label class="settings-label" for="setting-revision-hourly">Hourly</label>
+                    <input id="setting-revision-hourly" type="number" min="0" max="1000" step="1" />
+                  </div>
+                  <div class="settings-field" data-settings-label="Revisions daily" data-settings-help="Keep the newest revision from each of the last N days. Range 0-1000.">
+                    <label class="settings-label" for="setting-revision-daily">Daily</label>
+                    <input id="setting-revision-daily" type="number" min="0" max="1000" step="1" />
+                  </div>
+                  <div class="settings-field" data-settings-label="Revisions weekly" data-settings-help="Keep the newest revision from each of the last N weeks. Range 0-1000.">
+                    <label class="settings-label" for="setting-revision-weekly">Weekly</label>
+                    <input id="setting-revision-weekly" type="number" min="0" max="1000" step="1" />
+                  </div>
+                  <div class="settings-field" data-settings-label="Revisions monthly" data-settings-help="Keep the newest revision from each of the last N months. Range 0-1000.">
+                    <label class="settings-label" for="setting-revision-monthly">Monthly</label>
+                    <input id="setting-revision-monthly" type="number" min="0" max="1000" step="1" />
+                  </div>
+                  <div class="settings-field" data-settings-label="Revisions yearly" data-settings-help="Keep the newest revision from each of the last N years. Range 0-1000.">
+                    <label class="settings-label" for="setting-revision-yearly">Yearly</label>
+                    <input id="setting-revision-yearly" type="number" min="0" max="1000" step="1" />
+                  </div>
+                </div>
+              </fieldset>
+              <p class="settings-note">Wrap and syntax highlighting are feature switches under Features. Turning them off hides or disables their controls without changing any file.</p>
+            </section>
+
+            <section id="settings-panel-sidebar" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-sidebar" data-settings-panel="sidebar" hidden>
+              <div class="settings-panel-head">
+                <h3>Sidebar &amp; Tree</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="sidebar">Reset</button>
+              </div>
+              <div class="settings-grid">
+                <div class="settings-field" data-settings-label="Pinned limit" data-settings-help="How many pinned files to show in the sidebar. Range 1-100.">
+                  <label class="settings-label" for="setting-pinned-limit">Pinned files shown</label>
+                  <input id="setting-pinned-limit" type="number" min="1" max="100" step="1" />
+                </div>
+                <div class="settings-field" data-settings-label="Recent limit" data-settings-help="How many recent files to show in the sidebar. Range 1-100.">
+                  <label class="settings-label" for="setting-recent-limit">Recent files shown</label>
+                  <input id="setting-recent-limit" type="number" min="1" max="100" step="1" />
+                </div>
+              </div>
+              <div class="settings-field" data-settings-label="Default sort order" data-settings-help="Default ordering for folders and files in the repository tree.">
+                <label class="settings-label" for="setting-sort">Default sort order</label>
+                <select id="setting-sort">
+                  <option value="name">Name</option>
+                  <option value="modified">Modified date</option>
+                  <option value="size">Size</option>
+                </select>
+              </div>
+              <p class="settings-note">Tree filtering, sort and drag order, and create/delete actions are feature switches under Features. The sidebar headings also open a small limit popup.</p>
+            </section>
+
+            <section id="settings-panel-search" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-search" data-settings-panel="search" hidden>
+              <div class="settings-panel-head">
+                <h3>Search</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="search">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Search index" data-settings-help="The search index is maintained by Plainfold. Rebuild it if results look stale.">
+                <span class="settings-label">Search index</span>
+                <p id="settings-search-info" class="settings-value">Open a repository to see index information.</p>
+                <div class="inline-field">
+                  <button id="search-rescan" class="button" type="button">Rebuild search index</button>
+                </div>
+                <p class="settings-help">Rebuilding only reads repository files; nothing is changed on disk.</p>
+              </div>
+              <p id="settings-search-feature-state" class="settings-note"></p>
+            </section>
+
+            <section id="settings-panel-repositories" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-repositories" data-settings-panel="repositories" hidden>
+              <div class="settings-panel-head">
+                <h3>Repositories</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="repositories">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Default repository folder" data-settings-help="Folder opened automatically at launch. It wins over reopening the last repository.">
+                <label class="settings-label" for="setting-default-repository">Startup repository</label>
+                <div class="inline-field">
+                  <input id="setting-default-repository" type="text" readonly />
+                  <button id="choose-default-repository" class="button" type="button">Choose</button>
+                  <button id="use-current-repository" class="button" type="button">Use current</button>
+                  <button id="clear-default-repository" class="button" type="button">Clear</button>
+                </div>
+                <p class="settings-help">When empty, Plainfold reopens the last active repository at launch.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Recent repository limit" data-settings-help="How many saved repositories to show. Range 1-20.">
+                <label class="settings-label" for="setting-recent-repository-limit">Saved repositories shown</label>
+                <input id="setting-recent-repository-limit" type="number" min="1" max="20" step="1" />
+                <p class="settings-help">Most recent first, from 1 to 20.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Saved repositories" data-settings-help="Repositories remembered by Plainfold. Switch between them from the sidebar.">
+                <span class="settings-label">Saved repositories</span>
+                <ul id="settings-repositories-list" class="settings-repository-list"></ul>
+                <p class="settings-help">The active repository cannot be removed. Removing an entry never deletes files.</p>
+              </div>
+            </section>
+
+            <section id="settings-panel-updates" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-updates" data-settings-panel="updates" data-feature="updates updates.settingsSection" hidden>
+              <div class="settings-panel-head">
+                <h3>Updates</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="updates">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Update status" data-settings-help="Whether an update check has run and what it found.">
+                <span class="settings-label">Status</span>
+                <p id="setting-update-status" class="settings-value">Loading update status…</p>
+                <p id="setting-update-versions" class="settings-help"></p>
+              </div>
+              <div class="settings-field" data-settings-label="Update source" data-settings-help="Releases are checked only at api.github.com. No download or telemetry.">
+                <span class="settings-label">Source</span>
+                <p id="setting-update-source" class="settings-value"></p>
+                <p id="setting-update-last-checked" class="settings-help"></p>
+              </div>
+              <div class="settings-field" data-settings-label="Check for updates" data-settings-help="Check GitHub Releases now. Nothing is downloaded.">
+                <span class="settings-label">Manual check</span>
+                <div class="inline-field">
+                  <button id="setting-update-check" class="button" type="button">Check now</button>
+                </div>
+              </div>
+              <div id="settings-update-autocheck" class="settings-field" data-settings-label="Automatic update checks" data-settings-help="Check at most once per day at launch. Notifications only."></div>
+            </section>
+
+            <section id="settings-panel-features" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-features" data-settings-panel="features" hidden>
+              <div class="settings-panel-head">
+                <h3>Features</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="features">Reset all features</button>
+              </div>
+              <p class="settings-help">Hide features you do not use. Turning a feature off keeps every file, tag, pin, revision, and setting untouched; this panel is where it comes back.</p>
+              <div id="settings-features" class="settings-features"></div>
+            </section>
+
+            <section id="settings-panel-maintenance" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-maintenance" data-settings-panel="maintenance" hidden>
+              <div class="settings-panel-head">
+                <h3>Maintenance</h3>
+              </div>
+              <div class="settings-field" data-settings-label="Rebuild search index" data-settings-help="Rescan the open repository and rebuild the search index. Reports the indexed file count.">
+                <span class="settings-label">Search index</span>
+                <div class="inline-field">
+                  <button id="maintenance-rescan" class="button" type="button">Rebuild search index</button>
+                </div>
+                <p class="settings-help">Disabled when no repository is open. Nothing on disk is changed.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Clear recent repositories" data-settings-help="Remove the saved repository list. Files on disk are never deleted.">
+                <span class="settings-label">Recent repositories</span>
+                <div class="inline-field">
+                  <button id="maintenance-clear-recents" class="button" type="button">Clear recent repositories</button>
+                </div>
+              </div>
+              <div class="settings-field" data-settings-label="Reset all settings" data-settings-help="Restore every setting and all feature switches to their defaults.">
+                <span class="settings-label">Reset</span>
+                <div class="inline-field">
+                  <button id="maintenance-reset-all" class="button danger-button" type="button">Reset all settings</button>
+                </div>
+                <p class="settings-help">Settings and feature switches only. Repository files, tags, pins, and revisions are untouched.</p>
+              </div>
+            </section>
+
+            <section id="settings-panel-about" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-about" data-settings-panel="about" hidden>
+              <div class="settings-panel-head">
+                <h3>About</h3>
+                <button class="button small settings-reset" type="button" data-settings-reset="about">Reset</button>
+              </div>
+              <div class="settings-field" data-settings-label="Version" data-settings-help="The running Plainfold version.">
+                <span class="settings-label">Version</span>
+                <p id="settings-about-version" class="settings-value">Plainfold</p>
+              </div>
+              <div class="settings-field" data-settings-label="Update source" data-settings-help="Release checks go only to GitHub Releases.">
+                <span class="settings-label">Update source</span>
+                <p id="settings-about-source" class="settings-value"></p>
+              </div>
+              <div class="settings-field" data-settings-label="GitHub repository" data-settings-help="Project link placeholder until the repository is published.">
+                <span class="settings-label">GitHub</span>
+                <p id="settings-about-github" class="settings-value">Repository link not configured.</p>
+              </div>
+              <p class="settings-note">Plainfold keeps your notes as plain text files on disk. Nothing is sent anywhere except the optional update check to api.github.com, and update checks can be turned off under Features.</p>
+            </section>
+          </div>
         </div>
-        <p id="settings-error" class="form-error" hidden></p>
-        <div class="dialog-actions">
-          <button id="settings-cancel" class="button" type="button">Cancel</button>
-          <button id="settings-submit" class="button primary" value="default">Save settings</button>
+
+        <div class="settings-statusbar">
+          <p id="settings-error" class="form-error" role="alert" hidden></p>
         </div>
-      </form>
+      </div>
     </dialog>
 
     <script type="module" src="/src/main.js"></script>

@@ -52,6 +52,7 @@ export function createEditor({
   wrap = false,
   tabWidth = 4,
   dark = false,
+  syntaxHighlighting = true,
   onChange = () => {},
   onSave = () => {},
   onSearch = () => {},
@@ -63,6 +64,7 @@ export function createEditor({
   const themeCompartment = new Compartment();
   const tabCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
+  const syntaxCompartment = new Compartment();
 
   const shortcuts = Prec.highest(
     keymap.of([
@@ -121,7 +123,7 @@ export function createEditor({
         },
       }),
       keymap.of([indentWithTab]),
-      languageFor(path),
+      syntaxCompartment.of(syntaxHighlighting ? languageFor(path) : []),
       tabCompartment.of([
         EditorState.tabSize.of(tabWidth),
         indentUnit.of(" ".repeat(tabWidth)),
@@ -161,6 +163,11 @@ export function createEditor({
           EditorState.tabSize.of(width),
           indentUnit.of(" ".repeat(width)),
         ]),
+      });
+    },
+    setSyntaxHighlighting(enabled) {
+      view.dispatch({
+        effects: syntaxCompartment.reconfigure(enabled ? languageFor(path) : []),
       });
     },
     setReadOnly(value) {

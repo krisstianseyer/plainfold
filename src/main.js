@@ -5,6 +5,22 @@ import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin
 import { api } from "./api.js";
 import { createEditor } from "./editor.js";
 import {
+  FEATURE_CATEGORIES,
+  FEATURE_CATEGORY_ORDER,
+  FEATURE_GROUPS,
+  controlsForGroup,
+  featureEnabled,
+  groupOf,
+} from "./features.js";
+import { normalizeRepositoryEntries, repositories } from "./repositories.js";
+import {
+  UPDATE_OWNER,
+  UPDATE_REPO,
+  checkForUpdate,
+  updateSourceConfigured,
+  updateSourceLabel,
+} from "./updater.js";
+import {
   basename,
   contentChangedSince,
   countFiles,
@@ -30,10 +46,15 @@ const els = {
   search: $("search"),
   undoButton: $("undo-button"),
   redoButton: $("redo-button"),
-  rescan: $("rescan"),
   settingsButton: $("settings-button"),
   pinnedList: $("pinned-list"),
   recentList: $("recent-list"),
+  repositoryList: $("repository-list"),
+  welcomeRepositories: $("welcome-repositories"),
+  updateBanner: $("update-banner"),
+  updateBannerText: $("update-banner-text"),
+  updateBannerNotes: $("update-banner-notes"),
+  updateBannerDismiss: $("update-banner-dismiss"),
   tree: $("tree"),
   treeFilter: $("tree-filter"),
   treeEmpty: $("tree-empty"),
@@ -110,11 +131,16 @@ const els = {
   propertiesDialog: $("properties-dialog"),
   propertiesList: $("properties-list"),
   settingsDialog: $("settings-dialog"),
-  settingsForm: $("settings-form"),
+  settingsSearch: $("settings-search"),
+  settingsClose: $("settings-close"),
+  settingsSaved: $("settings-saved"),
+  settingsNoMatch: $("settings-no-match"),
   settingTheme: $("setting-theme"),
   settingFontFamily: $("setting-font-family"),
   settingFontSize: $("setting-font-size"),
   settingTabWidth: $("setting-tab-width"),
+  settingPinnedLimit: $("setting-pinned-limit"),
+  settingRecentLimit: $("setting-recent-limit"),
   pinnedTitle: $("pinned-title"),
   recentTitle: $("recent-title"),
   settingAutosaveMode: $("setting-autosave-mode"),
@@ -127,11 +153,30 @@ const els = {
   settingRevisionYearly: $("setting-revision-yearly"),
   settingSort: $("setting-sort"),
   settingDefaultRepository: $("setting-default-repository"),
+  settingRecentRepositoryLimit: $("setting-recent-repository-limit"),
   chooseDefaultRepository: $("choose-default-repository"),
   useCurrentRepository: $("use-current-repository"),
   clearDefaultRepository: $("clear-default-repository"),
+  settingsRepositoriesList: $("settings-repositories-list"),
+  settingUpdateStatus: $("setting-update-status"),
+  settingUpdateSource: $("setting-update-source"),
+  settingUpdateVersions: $("setting-update-versions"),
+  settingUpdateLastChecked: $("setting-update-last-checked"),
+  settingUpdateCheck: $("setting-update-check"),
+  settingsUpdateAutocheck: $("settings-update-autocheck"),
+  settingsFeatures: $("settings-features"),
+  settingsSearchInfo: $("settings-search-info"),
+  settingsSearchFeatureState: $("settings-search-feature-state"),
+  settingsZoomValue: $("settings-zoom-value"),
+  resetEditorZoom: $("reset-editor-zoom"),
+  searchRescan: $("search-rescan"),
+  maintenanceRescan: $("maintenance-rescan"),
+  maintenanceClearRecents: $("maintenance-clear-recents"),
+  maintenanceResetAll: $("maintenance-reset-all"),
+  settingsAboutVersion: $("settings-about-version"),
+  settingsAboutSource: $("settings-about-source"),
+  settingsAboutGithub: $("settings-about-github"),
   settingsError: $("settings-error"),
-  settingsCancel: $("settings-cancel"),
 };
 
 const SIDEBAR_MIN = 200;
@@ -162,6 +207,10 @@ const DEFAULT_SETTINGS = {
   revisionMonthly: 12,
   revisionYearly: 100,
   desktopShortcutPrompted: false,
+  disabledFeatures: [],
+  recentRepositories: [],
+  lastRepository: null,
+  recentRepositoryLimit: 8,
 };
 
 const state = {
@@ -202,12 +251,86 @@ const state = {
   statusTimer: null,
   undoInfo: { undoLabel: null, redoLabel: null },
   undoBusy: false,
+  version: "",
+  // Settings dialog state: a draft feature list, debounced auto-save, and
+  // which panel/search is showing.
+  settingsDraftFeatures: new Set(),
+  settingsSaveTimer: null,
+  settingsSaveChain: Promise.resolve(),
+  settingsDirty: false,
+  settingsRevision: 0,
+  settingsSaveFailed: false,
+  settingsClosing: false,
+  settingsSection: "appearance",
+  settingsQuery: "",
+  expandedFeatureGroups: new Set(),
+  savedIndicatorTimer: null,
+  searchIndexMessage: "",
+  updateInfo: {
+    currentVersion: "",
+    latestVersion: null,
+    lastChecked: null,
+    status: "",
+  },
 };
 
 const media = window.matchMedia("(prefers-color-scheme: dark)");
 media.addEventListener("change", () => {
   if ((state.settings.theme ?? "system") === "system") applyTheme();
 });
+
+/**
+ * True when a feature group or advanced control is enabled. Unknown ids and
+ * missing settings are treated as enabled.
+ */
+function featureOn(id) {
+  return featureEnabled(id, state.settings.disabledFeatures);
+}
+
+/**
+ * Hide every element declared with data-feature and block the corresponding
+ * UI. Multiple ids may be space-separated; all of them must be enabled.
+ * Data stored by disabled features (tags, pins, recents, revisions) is left
+ * untouched.
+ */
+function applyFeatureVisibility() {
+  const disabled = state.settings.disabledFeatures;
+  for (const element of document.querySelectorAll("[data-feature]")) {
+    const ids = String(element.dataset.feature ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    const visible = ids.every((id) => featureEnabled(id, disabled));
+    element.classList.toggle("feature-off", !visible);
+    if (!visible && element === document.activeElement) {
+      element.blur?.();
+    }
+  }
+  if (!featureOn("search") || !featureOn("search.results")) hideResults();
+  if (!featureOn("about") || !featureOn("about.brand")) hideBrandPopover();
+  state.editor?.setSyntaxHighlighting?.(featureOn("syntaxHighlighting.editor"));
+  if (!featureOn("autosave") || !featureOn("autosave.engine")) clearAutosave();
+  updateStatusLeft();
+  if (state.currentFile) {
+    updateFileStats(state.editor?.getValue() ?? "", state.currentFile.size);
+  } else {
+    els.statusRight.textContent = "";
+  }
+  updateControls();
+  if (els.settingsDialog?.open) {
+    const panels = settingsPanels();
+    const active = panels.find(
+      (panel) => panel.dataset.settingsPanel === state.settingsSection
+    );
+    if (active?.classList.contains("feature-off")) {
+      const fallback = panels.find(
+        (panel) => !panel.classList.contains("feature-off")
+      );
+      if (fallback) activateSettingsSection(fallback.dataset.settingsPanel);
+    }
+    updateSettingsPanelVisibility();
+  }
+}
 
 function errText(error) {
   if (typeof error === "string") return error;
@@ -249,6 +372,10 @@ function nextFrame() {
 
 /** Folders and files in the whole repository, shown at the bottom left. */
 function updateStatusLeft() {
+  if (!featureOn("repositoryCounts") || !featureOn("repositoryCounts.statusCounts")) {
+    els.statusLeft.textContent = "";
+    return;
+  }
   if (!state.repository) {
     els.statusLeft.textContent = "";
     return;
@@ -260,6 +387,10 @@ function updateStatusLeft() {
 
 /** Words, characters, and size of the open file, shown at the bottom right. */
 function updateFileStats(content, size) {
+  if (!featureOn("editorStats") || !featureOn("editorStats.statusWords")) {
+    els.statusRight.textContent = "";
+    return;
+  }
   els.statusRight.textContent = statsText(content, size);
 }
 
@@ -394,21 +525,25 @@ function saveZoom() {
 
 /** Drop the zoom level so the font size from Settings applies again. */
 function resetZoom() {
+  if (!featureOn("zoom") || !featureOn("zoom.resetShortcut")) return;
   if (state.zoom === null) return;
   state.zoom = null;
   applyZoom();
   saveZoom();
   setStatus("Zoom reset to the size set in Settings.");
+  refreshSettingsDynamic();
 }
 
 /** Zoom by whole steps, keeping the caret visible. */
 function zoomBy(delta) {
+  if (!featureOn("zoom") || !featureOn("zoom.wheel")) return;
   const next = clampZoom(editorFontSize() + delta * ZOOM_STEP);
   if (next === editorFontSize()) return;
   state.zoom = next;
   applyZoom();
   saveZoom();
   setStatus(`Zoom ${next}px. Ctrl+wheel to change, Ctrl+0 to reset.`);
+  refreshSettingsDynamic();
 }
 
 /** Ctrl+wheel is the familiar Notepad gesture. Only the editor reacts; the
@@ -418,6 +553,7 @@ function wireZoom(element) {
     "wheel",
     (event) => {
       if (!event.ctrlKey && !event.metaKey) return;
+      if (!featureOn("zoom") || !featureOn("zoom.wheel")) return;
       event.preventDefault();
       zoomBy(event.deltaY < 0 ? 1 : -1);
     },
@@ -427,12 +563,23 @@ function wireZoom(element) {
 
 function applySettings(next) {
   state.settings = { ...DEFAULT_SETTINGS, ...next };
+  state.settings.disabledFeatures = Array.isArray(state.settings.disabledFeatures)
+    ? [...state.settings.disabledFeatures]
+    : [];
+  state.settings.recentRepositories = Array.isArray(state.settings.recentRepositories)
+    ? [...state.settings.recentRepositories]
+    : [];
+  state.settingsDraftFeatures = new Set(state.settings.disabledFeatures);
   applyTheme();
   state.editor?.setTabWidth(state.settings.tabWidth);
   clearAutosave();
   scheduleAutosave();
+  applyFeatureVisibility();
   renderShortLists();
   renderTree();
+  renderRepositorySkeletons();
+  refreshSettingsDynamic();
+  syncFeatureSwitches();
 }
 
 function loadSidebarWidth() {
@@ -466,22 +613,41 @@ function saveSidebarWidth() {
 function updateControls() {
   const hasRepository = Boolean(state.repository);
   const hasFile = Boolean(state.currentFile);
-  els.search.disabled = !hasRepository;
-  els.rescan.disabled = !hasRepository;
+  els.search.disabled =
+    !hasRepository || !featureOn("search") || !featureOn("search.toolbar");
   const undoLabel = state.undoInfo.undoLabel;
-  els.undoButton.disabled = !hasRepository || state.undoBusy;
+  els.undoButton.disabled =
+    !hasRepository ||
+    state.undoBusy ||
+    !featureOn("repositoryUndo") ||
+    !featureOn("repositoryUndo.buttons");
   els.undoButton.title = undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : "Nothing to undo";
   const redoLabel = state.undoInfo.redoLabel;
-  els.redoButton.disabled = !hasRepository || state.undoBusy;
+  els.redoButton.disabled =
+    !hasRepository ||
+    state.undoBusy ||
+    !featureOn("repositoryUndo") ||
+    !featureOn("repositoryUndo.buttons");
   els.redoButton.title = redoLabel ? `Redo ${redoLabel} (Ctrl+Y)` : "Nothing to redo";
-  els.treeFilter.disabled = !hasRepository;
-  els.sortAlpha.disabled = !hasRepository;
-  els.newFile.disabled = !hasRepository;
-  els.newFolder.disabled = !hasRepository;
-  els.wrapToggle.disabled = !hasFile;
+  els.treeFilter.disabled =
+    !hasRepository || !featureOn("treeFilter") || !featureOn("treeFilter.input");
+  els.sortAlpha.disabled =
+    !hasRepository || !featureOn("sortAndOrder") || !featureOn("sortAndOrder.sortButton");
+  els.newFile.disabled =
+    !hasRepository || !featureOn("createDelete") || !featureOn("createDelete.newFile");
+  els.newFolder.disabled =
+    !hasRepository || !featureOn("createDelete") || !featureOn("createDelete.newFolder");
+  els.wrapToggle.disabled =
+    !hasFile || !featureOn("wrap") || !featureOn("wrap.toggle");
   els.saveButton.disabled = !hasFile || state.currentFile?.readOnly || !state.dirty;
   els.saveButton.title = state.currentFile?.readOnly ? "This file is read-only" : "Save (Ctrl+S)";
   els.closeFile.hidden = !hasFile;
+  if (els.maintenanceRescan) {
+    els.maintenanceRescan.disabled = !hasRepository;
+  }
+  if (els.searchRescan) {
+    els.searchRescan.disabled = !hasRepository;
+  }
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   els.tree.classList.toggle("filtered", filtered);
   if (!hasRepository) {
@@ -565,8 +731,32 @@ function applySnapshot(snapshot) {
   els.treeFilter.value = "";
   hideResults();
   state.settings = { ...DEFAULT_SETTINGS, ...snapshot.settings };
+  // Snapshot-level repository data is server-managed and may be present even
+  // when an older backend omits it from settings.
+  if (Array.isArray(snapshot.recentRepositories)) {
+    state.settings.recentRepositories = normalizeRepositoryEntries(
+      snapshot.recentRepositories
+    ).map((entry) => entry.path);
+  }
+  if (snapshot.lastRepository !== undefined) {
+    state.settings.lastRepository = snapshot.lastRepository;
+  }
+  state.settings.disabledFeatures = Array.isArray(state.settings.disabledFeatures)
+    ? [...state.settings.disabledFeatures]
+    : [];
+  state.settings.recentRepositories = Array.isArray(state.settings.recentRepositories)
+    ? [...state.settings.recentRepositories]
+    : [];
   state.savedSettings = { ...state.settings };
+  state.settingsDraftFeatures = new Set(state.settings.disabledFeatures);
+  state.searchIndexMessage = "";
+  state.version = snapshot.version ?? "";
   els.appVersion.textContent = snapshot.version ? `v${snapshot.version}` : "";
+  if (els.settingsAboutVersion) {
+    els.settingsAboutVersion.textContent = snapshot.version
+      ? `Plainfold v${snapshot.version}`
+      : "Plainfold";
+  }
   state.repository = snapshot.repository;
   state.tree = snapshot.tree ?? [];
   state.expanded = new Set();
@@ -584,9 +774,12 @@ function applySnapshot(snapshot) {
   const repositoryPath = state.repository ? state.repository.path : "";
   els.repositoryLabel.title = repositoryPath;
   els.repositoryLabel.style.cursor = repositoryPath ? "help" : "";
+  applyFeatureVisibility();
   renderTree();
   renderShortLists();
+  renderRepositorySkeletons();
   renderTagFilter();
+  refreshSettingsDynamic();
   updateControls();
   updateStatusLeft();
   updateTitle();
@@ -655,6 +848,166 @@ function renderShortLists() {
     "No recent files.",
     "recent"
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Saved repositories (foundation hooks)                               */
+/* ------------------------------------------------------------------ */
+
+function recentRepositoryLimit() {
+  return Math.min(
+    20,
+    Math.max(1, Math.round(Number(state.settings.recentRepositoryLimit) || 8))
+  );
+}
+
+function savedRepositoryEntries() {
+  return normalizeRepositoryEntries(state.settings.recentRepositories).slice(
+    0,
+    recentRepositoryLimit()
+  );
+}
+
+function repositoryIsActive(entry) {
+  return Boolean(state.repository) && state.repository.path === entry.path;
+}
+
+async function switchToSavedRepository(entry) {
+  if (!entry?.exists) {
+    setStatus(`The repository at ${entry?.path ?? "that path"} is missing.`);
+    return;
+  }
+  if (repositories?.configured && typeof repositories.switchTo === "function") {
+    await repositories.switchTo(entry.path);
+    return;
+  }
+  setStatus("Switching saved repositories arrives in a later update.");
+}
+
+async function removeSavedRepository(entry) {
+  if (repositoryIsActive(entry)) {
+    setStatus("Switch to another repository before removing this one.");
+    return;
+  }
+  if (
+    !featureOn("recentRepositories") ||
+    !featureOn("recentRepositories.removeAction")
+  ) {
+    return;
+  }
+  if (repositories?.configured && typeof repositories.removeRecent === "function") {
+    await repositories.removeRecent(entry.path);
+    return;
+  }
+  setStatus("Removing saved repositories arrives in a later update.");
+}
+
+function makeRepositoryListItem(entry, { settings = false } = {}) {
+  const li = document.createElement("li");
+  const active = repositoryIsActive(entry);
+  if (active) li.classList.add("active");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "repository-entry";
+  button.title = entry.path;
+  button.disabled = !entry.exists;
+  if (active) button.classList.add("active");
+  const name = document.createElement("span");
+  name.className = "repository-name";
+  name.textContent = entry.name;
+  const path = document.createElement("span");
+  path.className = "repository-path";
+  path.textContent = entry.path;
+  if (!entry.exists) {
+    const missing = document.createElement("span");
+    missing.className = "repository-missing";
+    missing.textContent = "Missing";
+    button.append(name, missing, path);
+  } else {
+    button.append(name, path);
+  }
+  if (settings) {
+    const meta = document.createElement("span");
+    meta.className = "repository-meta";
+    meta.append(name.cloneNode(true), path.cloneNode(true));
+    if (!entry.exists) {
+      const missing = document.createElement("span");
+      missing.className = "repository-missing";
+      missing.textContent = "Missing";
+      meta.append(missing);
+    }
+    li.append(meta);
+    if (active) {
+      const badge = document.createElement("span");
+      badge.className = "repository-active";
+      badge.textContent = "Active";
+      li.append(badge);
+    }
+  } else {
+    button.addEventListener("click", () => switchToSavedRepository(entry));
+    li.append(button);
+  }
+
+  if (!active) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "repository-remove";
+    remove.textContent = "×";
+    remove.title = `Remove ${entry.name} from saved repositories`;
+    remove.setAttribute("aria-label", `Remove ${entry.name} from saved repositories`);
+    remove.dataset.feature =
+      "recentRepositories recentRepositories.removeAction";
+    remove.hidden =
+      !featureOn("recentRepositories") ||
+      !featureOn("recentRepositories.removeAction");
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      removeSavedRepository(entry);
+    });
+    li.append(remove);
+  }
+  return li;
+}
+
+/** Sidebar and welcome-screen repositories. Repositories is a v1.2 stub. */
+function renderRepositorySkeletons() {
+  const entries = savedRepositoryEntries();
+  for (const element of [els.welcomeRepositories]) {
+    if (!element) continue;
+    element.textContent = "";
+    for (const entry of entries) {
+      element.append(makeRepositoryListItem(entry));
+    }
+  }
+  if (els.repositoryList) {
+    els.repositoryList.textContent = "";
+    for (const entry of entries) {
+      els.repositoryList.append(makeRepositoryListItem(entry));
+    }
+    if (!entries.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No saved repositories yet.";
+      els.repositoryList.append(li);
+    }
+  }
+}
+
+function renderSettingsRepositories() {
+  const list = els.settingsRepositoriesList;
+  if (!list) return;
+  list.textContent = "";
+  const entries = savedRepositoryEntries();
+  if (!entries.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No saved repositories yet.";
+    list.append(li);
+    return;
+  }
+  for (const entry of entries) {
+    list.append(makeRepositoryListItem(entry, { settings: true }));
+  }
 }
 
 function renderShortList(element, paths, emptyText, source) {
@@ -889,7 +1242,8 @@ function renderNodes(nodes, depth, filtered) {
     row.dataset.name = node.name;
     row.style.paddingLeft = `${depth * 14}px`;
     if (state.selected === node.path) row.classList.add("selected");
-    row.draggable = !filtered;
+    row.draggable =
+      !filtered && featureOn("sortAndOrder") && featureOn("sortAndOrder.dragReorder");
 
     const disclosure = document.createElement("span");
     disclosure.className = "tree-disclosure";
@@ -958,7 +1312,13 @@ function renderNodes(nodes, depth, filtered) {
       showContextMenu(event.clientX, event.clientY, node);
     });
     row.addEventListener("dragstart", (event) => {
-      if (filtered || state.saving || state.moving) {
+      if (
+        filtered ||
+        state.saving ||
+        state.moving ||
+        !featureOn("sortAndOrder") ||
+        !featureOn("sortAndOrder.dragReorder")
+      ) {
         event.preventDefault();
         return;
       }
@@ -1031,6 +1391,7 @@ function renderNodes(nodes, depth, filtered) {
 async function dropReorder(targetNode, event) {
   const source = state.dragSource;
   if (!source) return;
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragReorder")) return;
   const parent = parentOf(targetNode.path);
   if (source.parent !== parent) return;
 
@@ -1071,6 +1432,7 @@ function siblingNodes(node) {
 }
 
 async function moveNode(node, delta) {
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
   const parent = parentOf(node.path);
   const siblings = siblingNodes(node);
   const names = siblings.map((sibling) => sibling.name);
@@ -1098,6 +1460,7 @@ function compareNames(a, b) {
 }
 
 async function sortAlphabetically(parent) {
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.sortButton")) return;
   const folder = parent ? findNode(state.tree, parent) : null;
   if (parent && !folder) {
     setStatus("That folder is no longer available.");
@@ -1116,6 +1479,7 @@ async function sortAlphabetically(parent) {
 }
 
 async function resetOrder(parent) {
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.resetAction")) return;
   try {
     await api.setSortOrder(parent, []);
     await loadTree();
@@ -1143,54 +1507,85 @@ function showContextMenu(x, y, node, source = null) {
   };
   const separator = () => els.contextMenu.append(document.createElement("hr"));
 
+  const can = (id) => featureOn(id);
+  const rule = () => {
+    if (els.contextMenu.children.length) separator();
+  };
+
   if (!node) {
-    add("New file…", () => createItem("", false));
-    add("New folder…", () => createItem("", true));
-    add("Sort alphabetically", () => sortAlphabetically(""));
-    separator();
-    add("Reset custom order", () => resetOrder(""));
-  } else if (node.isDir) {
-    add("New file…", () => createItem(node.path, false));
-    add("New folder…", () => createItem(node.path, true));
-    add("Sort alphabetically", () => sortAlphabetically(node.path));
-    if (node.path.includes("/")) {
-      add("Move to repository root", () => movePath(node.path, ""));
+    if (can("createDelete.newFile")) add("New file…", () => createItem("", false));
+    if (can("createDelete.newFolder")) add("New folder…", () => createItem("", true));
+    if (can("sortAndOrder.sortButton")) {
+      add("Sort alphabetically", () => sortAlphabetically(""));
     }
-    const siblings = siblingNodes(node);
-    const index = siblings.findIndex((sibling) => sibling.path === node.path);
-    add("Move up", () => moveNode(node, -1), false, index <= 0);
-    add("Move down", () => moveNode(node, 1), false, index === siblings.length - 1);
-    add("Reset custom order", () => resetOrder(node.path));
-    separator();
-    add("Delete folder…", () => deleteItem(node), true);
+    if (can("sortAndOrder.resetAction")) {
+      rule();
+      add("Reset custom order", () => resetOrder(""));
+    }
+  } else if (node.isDir) {
+    if (can("createDelete.newFile")) add("New file…", () => createItem(node.path, false));
+    if (can("createDelete.newFolder")) add("New folder…", () => createItem(node.path, true));
+    if (can("sortAndOrder.sortButton")) {
+      add("Sort alphabetically", () => sortAlphabetically(node.path));
+    }
+    if (can("sortAndOrder.dragMove")) {
+      if (node.path.includes("/")) {
+        add("Move to repository root", () => movePath(node.path, ""));
+      }
+      const siblings = siblingNodes(node);
+      const index = siblings.findIndex((sibling) => sibling.path === node.path);
+      add("Move up", () => moveNode(node, -1), false, index <= 0);
+      add("Move down", () => moveNode(node, 1), false, index === siblings.length - 1);
+    }
+    if (can("sortAndOrder.resetAction")) {
+      add("Reset custom order", () => resetOrder(node.path));
+    }
+    if (can("createDelete.deleteAction")) {
+      rule();
+      add("Delete folder…", () => deleteItem(node), true);
+    }
   } else {
     add("Open", () => openFile(node.path));
     add("Properties…", () => showProperties(node.path));
-    add("Show revisions…", () => showRevisions(node.path));
-    const pinned = state.pins.includes(node.path);
-    if (source === "pinned") {
-      add("Unpin from Pinned", () => togglePin(node.path));
-    } else {
-      add(pinned ? "Unpin" : "Pin", () => togglePin(node.path));
+    if (can("revisions.contextAction")) {
+      add("Show revisions…", () => showRevisions(node.path));
     }
-    if (source === "recent") {
+    if (can("pinned.contextActions")) {
+      const pinned = state.pins.includes(node.path);
+      if (source === "pinned") {
+        add("Unpin from Pinned", () => togglePin(node.path));
+      } else {
+        add(pinned ? "Unpin" : "Pin", () => togglePin(node.path));
+      }
+    }
+    if (source === "recent" && can("recentFiles.removeAction")) {
       add("Remove from Recent", () => removeRecent(node.path));
     }
     if (source) {
       add("Reveal in repository", () => revealInTree(node.path));
     }
-    add("Edit tags…", () => editTags(node.path));
-    add("Sort alphabetically", () => sortAlphabetically(parentOf(node.path)));
-    if (node.path.includes("/")) {
-      add("Move to repository root", () => movePath(node.path, ""));
+    if (can("tags.contextAction")) {
+      add("Edit tags…", () => editTags(node.path));
     }
-    const siblings = siblingNodes(node);
-    const index = siblings.findIndex((sibling) => sibling.path === node.path);
-    add("Move up", () => moveNode(node, -1), false, index <= 0);
-    add("Move down", () => moveNode(node, 1), false, index === siblings.length - 1);
-    add("Reset custom order", () => resetOrder(parentOf(node.path)));
-    separator();
-    add("Delete file…", () => deleteItem(node), true);
+    if (can("sortAndOrder.sortButton")) {
+      add("Sort alphabetically", () => sortAlphabetically(parentOf(node.path)));
+    }
+    if (can("sortAndOrder.dragMove")) {
+      if (node.path.includes("/")) {
+        add("Move to repository root", () => movePath(node.path, ""));
+      }
+      const siblings = siblingNodes(node);
+      const index = siblings.findIndex((sibling) => sibling.path === node.path);
+      add("Move up", () => moveNode(node, -1), false, index <= 0);
+      add("Move down", () => moveNode(node, 1), false, index === siblings.length - 1);
+    }
+    if (can("sortAndOrder.resetAction")) {
+      add("Reset custom order", () => resetOrder(parentOf(node.path)));
+    }
+    if (can("createDelete.deleteAction")) {
+      rule();
+      add("Delete file…", () => deleteItem(node), true);
+    }
   }
 
   els.contextMenu.hidden = false;
@@ -1218,7 +1613,9 @@ function showFileContextMenu(x, y) {
   };
   const path = state.currentFile.path;
   add("Properties…", () => showProperties(path));
-  add("Show revisions…", () => showRevisions(path));
+  if (featureOn("revisions") && featureOn("revisions.contextAction")) {
+    add("Show revisions…", () => showRevisions(path));
+  }
   add("Copy full path", () => copyText(state.repository ? `${state.repository.path}\\${path.replaceAll("/", "\\")}` : path));
   els.contextMenu.hidden = false;
   const rect = els.contextMenu.getBoundingClientRect();
@@ -1239,6 +1636,7 @@ async function copyText(text) {
 }
 
 function toggleBrandPopover() {
+  if (!featureOn("about") || !featureOn("about.brand")) return;
   if (els.brandPopover.hidden) {
     els.brandPopover.hidden = false;
     els.brandButton.setAttribute("aria-expanded", "true");
@@ -1267,8 +1665,13 @@ function targetFolder() {
   return node.isDir ? node.path : parentOf(node.path);
 }
 
-async function createItem(parent, isDir) {
+async function createItem(parent, isDir, { fromEmpty = false } = {}) {
   if (!state.repository) return;
+  const allowed = fromEmpty
+    ? featureOn("createDelete") && featureOn("createDelete.emptyNewFile")
+    : featureOn("createDelete") &&
+      featureOn(isDir ? "createDelete.newFolder" : "createDelete.newFile");
+  if (!allowed) return;
   ensureExpanded(parent);
   renderTree();
   let initial = "";
@@ -1311,6 +1714,7 @@ async function createItem(parent, isDir) {
 }
 
 async function deleteItem(node) {
+  if (!featureOn("createDelete") || !featureOn("createDelete.deleteAction")) return;
   const kind = node.isDir ? "folder" : "file";
   const affectsCurrent =
     state.currentFile &&
@@ -1337,6 +1741,12 @@ async function deleteItem(node) {
 }
 
 async function togglePin(path) {
+  if (
+    !featureOn("pinned") ||
+    !featureOn("pinned.contextActions")
+  ) {
+    return;
+  }
   const pinned = state.pins.includes(path);
   try {
     await api.setPin(path, !pinned);
@@ -1348,6 +1758,9 @@ async function togglePin(path) {
 }
 
 async function removeRecent(path) {
+  if (!featureOn("recentFiles") || !featureOn("recentFiles.removeAction")) {
+    return;
+  }
   try {
     await api.removeRecent(path);
     await refreshOrganization();
@@ -1395,6 +1808,7 @@ function remapCurrentFile(oldPath, newPath) {
 }
 
 async function movePath(sourcePath, targetParent) {
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
   if (state.saving || state.moving) return;
   if (sourcePath === targetParent || isPathWithin(targetParent, sourcePath)) {
     setStatus("A folder cannot be moved into itself.");
@@ -1421,6 +1835,7 @@ async function movePath(sourcePath, targetParent) {
 }
 
 async function editTags(path) {
+  if (!featureOn("tags") || !featureOn("tags.contextAction")) return;
   const current = (state.tags.get(path) ?? []).join(", ");
   const value = await promptTags(current);
   if (value === null) return;
@@ -1438,6 +1853,7 @@ async function editTags(path) {
 }
 
 async function showRevisions(path) {
+  if (!featureOn("revisions") || !featureOn("revisions.contextAction")) return;
   try {
     const revisions = await api.listRevisions(path);
     els.revisionsCopy.textContent = path;
@@ -1574,6 +1990,10 @@ async function openFile(path, line = null) {
   try {
     const file = await api.readFile(path);
     if (file.external) {
+      if (!featureOn("externalFiles") || !featureOn("externalFiles.openDefaultApp")) {
+        setStatus("Opening non-text files outside Plainfold is turned off.");
+        return false;
+      }
       state.selected = path;
       ensureExpanded(path);
       renderTree();
@@ -1632,6 +2052,7 @@ function mountFile(file, line = null) {
     wrap: state.wrap,
     tabWidth: state.settings.tabWidth,
     dark: state.dark,
+    syntaxHighlighting: featureOn("syntaxHighlighting.editor"),
     onChange: markDirty,
     onSave: saveCurrent,
     onSearch: focusSearch,
@@ -1689,6 +2110,7 @@ function clearAutosave() {
 }
 
 function scheduleAutosave() {
+  if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
   if (
     state.settings.autosaveMode === "interval" &&
@@ -1715,6 +2137,7 @@ function scheduleAutosave() {
 
 async function runAutosave() {
   state.autosaveTimer = null;
+  if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
   const saved = await saveCurrent();
   if (!saved && state.dirty) scheduleAutosave();
@@ -1847,6 +2270,7 @@ function diskText() {
 }
 
 async function undo() {
+  if (!featureOn("repositoryUndo")) return;
   if (!state.repository || state.undoBusy) return;
   if (state.currentFile && state.dirty) {
     if (state.currentFile.readOnly) {
@@ -1890,6 +2314,7 @@ async function undo() {
 }
 
 async function redo() {
+  if (!featureOn("repositoryUndo")) return;
   if (!state.repository || state.undoBusy || !state.undoInfo.redoLabel) return;
   const currentPath = state.currentFile?.path ?? null;
   state.undoBusy = true;
@@ -1952,6 +2377,7 @@ async function syncEditorWithDisk(previousPath) {
 }
 
 function toggleWrap() {
+  if (!featureOn("wrap") || !featureOn("wrap.toggle")) return;
   state.wrap = !state.wrap;
   els.wrapToggle.textContent = state.wrap ? "Wrap on" : "Wrap off";
   els.wrapToggle.setAttribute("aria-pressed", String(state.wrap));
@@ -1963,6 +2389,13 @@ function toggleWrap() {
 /* ------------------------------------------------------------------ */
 
 function focusSearch() {
+  if (
+    !featureOn("search") ||
+    !featureOn("search.toolbar") ||
+    !featureOn("search.shortcut")
+  ) {
+    return;
+  }
   els.search.focus();
   els.search.select();
 }
@@ -1975,6 +2408,7 @@ function hideResults() {
 }
 
 async function runSearch() {
+  if (!featureOn("search")) return;
   const query = els.search.value.trim();
   if (!query) {
     hideResults();
@@ -1995,6 +2429,10 @@ async function runSearch() {
 }
 
 function renderResults(hits) {
+  if (!featureOn("search.results")) {
+    hideResults();
+    return;
+  }
   els.resultsList.textContent = "";
   els.resultsEmpty.hidden = hits.length > 0;
   els.resultsEmpty.textContent = "No matches.";
@@ -2118,8 +2556,9 @@ async function saveLimitFromForm() {
   try {
     const saved = await api.saveSettings(settings);
     els.limitDialog.close();
-    state.savedSettings = { ...state.savedSettings, ...saved };
-    applySettings(saved);
+    const merged = mergeSettingsResponse(settings, saved);
+    state.savedSettings = merged;
+    applySettings(merged);
     setStatus(
       limitTarget === "pinned"
         ? `Showing ${value} pinned ${value === 1 ? "file" : "files"}.`
@@ -2131,99 +2570,906 @@ async function saveLimitFromForm() {
   }
 }
 
-function openSettings() {
-  els.settingTheme.value = state.settings.theme ?? "system";
-  els.settingFontFamily.value = state.settings.fontFamily ?? "Consolas";
-  // Show the size actually in use, so a manual zoom is visible here too.
-  els.settingFontSize.value = String(editorFontSize());
-  els.settingTabWidth.value = String(state.settings.tabWidth ?? 4);
-  if (els.settingPinnedLimit) {
-    els.settingPinnedLimit.value = String(state.settings.pinnedLimit ?? 5);
+const SETTING_ELEMENT_IDS = {
+  theme: "setting-theme",
+  fontFamily: "setting-font-family",
+  fontSize: "setting-font-size",
+  tabWidth: "setting-tab-width",
+  pinnedLimit: "setting-pinned-limit",
+  recentLimit: "setting-recent-limit",
+  autosaveMode: "setting-autosave-mode",
+  autosaveIdleSecs: "setting-autosave-idle",
+  autosaveIntervalSecs: "setting-autosave-interval",
+  revisionHourly: "setting-revision-hourly",
+  revisionDaily: "setting-revision-daily",
+  revisionWeekly: "setting-revision-weekly",
+  revisionMonthly: "setting-revision-monthly",
+  revisionYearly: "setting-revision-yearly",
+  defaultSort: "setting-sort",
+  recentRepositoryLimit: "setting-recent-repository-limit",
+};
+
+const SETTINGS_SECTIONS = {
+  appearance: {
+    fields: ["theme", "fontFamily", "fontSize"],
+    features: [],
+  },
+  editor: {
+    fields: [
+      "tabWidth",
+      "autosaveMode",
+      "autosaveIdleSecs",
+      "autosaveIntervalSecs",
+      "revisionHourly",
+      "revisionDaily",
+      "revisionWeekly",
+      "revisionMonthly",
+      "revisionYearly",
+    ],
+    features: [
+      "autosave",
+      "revisions",
+      "watcher",
+      "wrap",
+      "syntaxHighlighting",
+      "editorStats",
+    ],
+  },
+  sidebar: {
+    fields: ["pinnedLimit", "recentLimit", "defaultSort"],
+    features: [
+      "pinned",
+      "recentFiles",
+      "tags",
+      "treeFilter",
+      "sortAndOrder",
+      "createDelete",
+      "repositoryCounts",
+    ],
+  },
+  search: {
+    fields: [],
+    features: ["search"],
+  },
+  repositories: {
+    fields: ["recentRepositoryLimit"],
+    features: ["recentRepositories"],
+  },
+  updates: {
+    fields: [],
+    features: ["updates"],
+  },
+  features: {
+    fields: [],
+    features: FEATURE_GROUPS.map((group) => group.id),
+  },
+  maintenance: {
+    fields: [],
+    features: [],
+  },
+  about: {
+    fields: [],
+    features: ["about"],
+  },
+};
+
+function settingsElement(key) {
+  const id = SETTING_ELEMENT_IDS[key];
+  return id ? $(id) : null;
+}
+
+function showSettingsError(message) {
+  if (!els.settingsError) return;
+  if (!message) {
+    els.settingsError.hidden = true;
+    els.settingsError.textContent = "";
+    return;
   }
-  if (els.settingRecentLimit) {
-    els.settingRecentLimit.value = String(state.settings.recentLimit ?? 5);
+  els.settingsError.hidden = false;
+  els.settingsError.textContent = message;
+}
+
+function showSavedIndicator() {
+  if (!els.settingsSaved) return;
+  els.settingsSaved.hidden = false;
+  clearTimeout(state.savedIndicatorTimer);
+  state.savedIndicatorTimer = setTimeout(() => {
+    els.settingsSaved.hidden = true;
+  }, 1600);
+}
+
+/**
+ * Merge a backend settings response over the local object. Fields the server
+ * omits (older backends, or client-only v1.2 fields) keep their local values.
+ */
+function mergeSettingsResponse(local, response) {
+  const merged = { ...local };
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    for (const [key, value] of Object.entries(response)) {
+      if (value !== undefined) merged[key] = value;
+    }
   }
-  els.settingAutosaveMode.value = state.settings.autosaveMode ?? "off";
-  els.settingAutosaveIdle.value = String(state.settings.autosaveIdleSecs ?? 20);
-  els.settingAutosaveInterval.value = String(
-    state.settings.autosaveIntervalSecs ?? 120
+  if (!Array.isArray(merged.disabledFeatures)) {
+    merged.disabledFeatures = Array.isArray(local.disabledFeatures)
+      ? [...local.disabledFeatures]
+      : [];
+  }
+  if (!Array.isArray(merged.recentRepositories)) {
+    merged.recentRepositories = Array.isArray(local.recentRepositories)
+      ? [...local.recentRepositories]
+      : [];
+  }
+  if (merged.lastRepository === undefined) {
+    merged.lastRepository = local.lastRepository ?? null;
+  }
+  if (merged.recentRepositoryLimit === undefined) {
+    merged.recentRepositoryLimit = local.recentRepositoryLimit ?? 8;
+  }
+  return merged;
+}
+
+function clampSettingNumber(element, min, max, fallback, label, issues) {
+  const raw = element?.value?.trim() ?? "";
+  let value = Math.round(Number(raw));
+  if (raw === "" || !Number.isFinite(value)) {
+    issues.push(`${label} must be a number; using ${fallback}.`);
+    return fallback;
+  }
+  if (value < min || value > max) {
+    const clamped = Math.min(max, Math.max(min, value));
+    issues.push(`${label} must be from ${min} to ${max}; using ${clamped}.`);
+    value = clamped;
+  }
+  return value;
+}
+
+/** Build a complete settings object from the current dialog fields. */
+function buildSettingsFromForm() {
+  const issues = [];
+
+  const settings = {
+    theme: els.settingTheme?.value ?? "system",
+    fontFamily: els.settingFontFamily?.value.trim() || "Consolas",
+    fontSize: clampSettingNumber(
+      els.settingFontSize,
+      8,
+      48,
+      14,
+      "Font size",
+      issues
+    ),
+    tabWidth: clampSettingNumber(els.settingTabWidth, 1, 16, 4, "Tab width", issues),
+    pinnedLimit: clampSettingNumber(
+      els.settingPinnedLimit,
+      1,
+      100,
+      5,
+      "Pinned limit",
+      issues
+    ),
+    recentLimit: clampSettingNumber(
+      els.settingRecentLimit,
+      1,
+      100,
+      5,
+      "Recent limit",
+      issues
+    ),
+    autosaveMode: els.settingAutosaveMode?.value ?? "off",
+    autosaveIdleSecs: clampSettingNumber(
+      els.settingAutosaveIdle,
+      1,
+      60,
+      20,
+      "Autosave idle",
+      issues
+    ),
+    autosaveIntervalSecs: clampSettingNumber(
+      els.settingAutosaveInterval,
+      120,
+      3600,
+      120,
+      "Autosave interval",
+      issues
+    ),
+    revisionHourly: clampSettingNumber(
+      els.settingRevisionHourly,
+      0,
+      1000,
+      24,
+      "Hourly revisions",
+      issues
+    ),
+    revisionDaily: clampSettingNumber(
+      els.settingRevisionDaily,
+      0,
+      1000,
+      7,
+      "Daily revisions",
+      issues
+    ),
+    revisionWeekly: clampSettingNumber(
+      els.settingRevisionWeekly,
+      0,
+      1000,
+      4,
+      "Weekly revisions",
+      issues
+    ),
+    revisionMonthly: clampSettingNumber(
+      els.settingRevisionMonthly,
+      0,
+      1000,
+      12,
+      "Monthly revisions",
+      issues
+    ),
+    revisionYearly: clampSettingNumber(
+      els.settingRevisionYearly,
+      0,
+      1000,
+      100,
+      "Yearly revisions",
+      issues
+    ),
+    defaultSort: els.settingSort?.value ?? "name",
+    defaultRepository: state.settingsDraftRepository ?? null,
+    recentRepositoryLimit: clampSettingNumber(
+      els.settingRecentRepositoryLimit,
+      1,
+      20,
+      8,
+      "Recent repository limit",
+      issues
+    ),
+    desktopShortcutPrompted: Boolean(state.settings.desktopShortcutPrompted),
+    disabledFeatures: [...state.settingsDraftFeatures],
+    // Server-managed fields are sent back exactly as they were received so a
+    // save cannot erase the saved repository list.
+    recentRepositories: Array.isArray(state.settings.recentRepositories)
+      ? [...state.settings.recentRepositories]
+      : [],
+    lastRepository: state.settings.lastRepository ?? null,
+  };
+
+  return { settings, issues };
+}
+
+function syncSettingsFields(values = state.settings) {
+  for (const [key, id] of Object.entries(SETTING_ELEMENT_IDS)) {
+    const element = $(id);
+    if (!element) continue;
+    const value = values[key];
+    element.value = value === null || value === undefined ? "" : String(value);
+  }
+  if (els.settingDefaultRepository) {
+    els.settingDefaultRepository.value = state.settingsDraftRepository ?? "";
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Features UI                                                         */
+/* ------------------------------------------------------------------ */
+
+function makeFeatureSwitch(id, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "switch";
+  button.setAttribute("role", "switch");
+  button.setAttribute("aria-checked", "true");
+  button.setAttribute("aria-label", label);
+  button.dataset.featureToggle = id;
+  return button;
+}
+
+function featureControlRow(control) {
+  const row = document.createElement("div");
+  row.className = "feature-control";
+  const copy = document.createElement("div");
+  copy.className = "feature-control-copy";
+  const label = document.createElement("div");
+  label.className = "feature-control-label";
+  label.textContent = control.label;
+  const description = document.createElement("p");
+  description.className = "feature-control-description";
+  description.textContent = control.description;
+  copy.append(label, description);
+  row.append(makeFeatureSwitch(control.id, `Toggle ${control.label}`), copy);
+  return row;
+}
+
+function renderFeatures() {
+  if (!els.settingsFeatures) return;
+  els.settingsFeatures.textContent = "";
+  for (const category of FEATURE_CATEGORY_ORDER) {
+    const categoryElement = document.createElement("div");
+    categoryElement.className = "feature-category";
+    const heading = document.createElement("h4");
+    heading.textContent = category;
+    categoryElement.append(heading);
+
+    const groups = FEATURE_GROUPS.filter(
+      (group) => FEATURE_CATEGORIES[group.id] === category
+    );
+    for (const group of groups) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "feature-group";
+      wrapper.dataset.featureGroup = group.id;
+      wrapper.dataset.featureSearch = [
+        group.label,
+        group.description,
+        ...group.controls.flatMap((control) => [
+          control.label,
+          control.description,
+        ]),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      const head = document.createElement("div");
+      head.className = "feature-group-head";
+      head.append(makeFeatureSwitch(group.id, `Toggle ${group.label}`));
+
+      const copy = document.createElement("div");
+      copy.className = "feature-group-copy";
+      const label = document.createElement("div");
+      label.className = "feature-group-label";
+      label.textContent = group.label;
+      const description = document.createElement("p");
+      description.className = "feature-group-description";
+      description.textContent = group.description;
+      copy.append(label, description);
+
+      const expand = document.createElement("button");
+      expand.type = "button";
+      expand.className = "feature-expand";
+      expand.textContent = "Advanced";
+      expand.dataset.featureExpand = group.id;
+      const controlsId = `feature-controls-${group.id}`;
+      expand.setAttribute("aria-controls", controlsId);
+      expand.setAttribute(
+        "aria-label",
+        `Advanced controls for ${group.label}`
+      );
+      expand.setAttribute(
+        "aria-expanded",
+        state.expandedFeatureGroups.has(group.id) ? "true" : "false"
+      );
+      head.append(copy, expand);
+
+      const controls = document.createElement("div");
+      controls.className = "feature-controls";
+      controls.id = controlsId;
+      controls.hidden = !state.expandedFeatureGroups.has(group.id);
+      for (const control of group.controls) {
+        controls.append(featureControlRow(control));
+      }
+
+      wrapper.append(head, controls);
+      categoryElement.append(wrapper);
+    }
+    els.settingsFeatures.append(categoryElement);
+  }
+  syncFeatureSwitches();
+}
+
+function renderUpdateAutoCheckSwitch() {
+  if (!els.settingsUpdateAutocheck) return;
+  const control = controlsForGroup("updates").find(
+    (item) => item.id === "updates.autoCheck"
   );
-  els.settingRevisionHourly.value = String(state.settings.revisionHourly ?? 24);
-  els.settingRevisionDaily.value = String(state.settings.revisionDaily ?? 7);
-  els.settingRevisionWeekly.value = String(state.settings.revisionWeekly ?? 4);
-  els.settingRevisionMonthly.value = String(state.settings.revisionMonthly ?? 12);
-  els.settingRevisionYearly.value = String(state.settings.revisionYearly ?? 100);
-  els.settingSort.value = state.settings.defaultSort ?? "name";
+  if (!control) return;
+  els.settingsUpdateAutocheck.textContent = "";
+  const label = document.createElement("span");
+  label.className = "settings-label";
+  label.textContent = control.label;
+  const row = document.createElement("div");
+  row.className = "feature-inline-switch";
+  const copy = document.createElement("div");
+  copy.className = "feature-control-copy";
+  const description = document.createElement("p");
+  description.className = "feature-control-description";
+  description.textContent = control.description;
+  copy.append(description);
+  row.append(makeFeatureSwitch(control.id, `Toggle ${control.label}`), copy);
+  els.settingsUpdateAutocheck.append(label, row);
+  syncFeatureSwitches();
+}
+
+/** Update every rendered switch from the draft feature list. */
+function syncFeatureSwitches() {
+  const draft = state.settingsDraftFeatures;
+  for (const button of document.querySelectorAll("[data-feature-toggle]")) {
+    const id = button.dataset.featureToggle;
+    if (!id) continue;
+    const group = groupOf(id);
+    const isGroup = group === id;
+    const groupOff = !isGroup && group ? draft.has(group) : false;
+    const checked = !draft.has(id) && !groupOff;
+    button.setAttribute("aria-checked", String(checked));
+    button.disabled = groupOff;
+  }
+  for (const row of document.querySelectorAll("[data-feature-group]")) {
+    const groupId = row.dataset.featureGroup;
+    row.classList.toggle("feature-group-off", draft.has(groupId));
+  }
+}
+
+function setFeatureEnabled(id, enabled) {
+  const group = groupOf(id);
+  if (!group) return;
+  if (enabled) state.settingsDraftFeatures.delete(id);
+  else state.settingsDraftFeatures.add(id);
+  state.settings.disabledFeatures = [...state.settingsDraftFeatures];
+  state.settingsDirty = true;
+  state.settingsRevision += 1;
+  applyFeatureVisibility();
+  syncFeatureSwitches();
+  saveSettingsNow();
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings panels, search, and auto-save                              */
+/* ------------------------------------------------------------------ */
+
+function settingsNavButtons() {
+  return [...(els.settingsDialog?.querySelectorAll("[data-settings-category]") ?? [])];
+}
+
+function settingsPanels() {
+  return [...(els.settingsDialog?.querySelectorAll("[data-settings-panel]") ?? [])];
+}
+
+function activateSettingsSection(sectionId) {
+  const panels = settingsPanels();
+  const target = panels.find((panel) => panel.dataset.settingsPanel === sectionId);
+  if (!target) return;
+  state.settingsSection = sectionId;
+  const buttons = settingsNavButtons();
+  for (const button of buttons) {
+    const active = button.dataset.settingsCategory === sectionId;
+    button.setAttribute("aria-selected", active ? "true" : "false");
+    button.tabIndex = active ? 0 : -1;
+  }
+  updateSettingsPanelVisibility();
+}
+
+function updateSettingsPanelVisibility() {
+  for (const panel of settingsPanels()) {
+    const active = panel.dataset.settingsPanel === state.settingsSection;
+    panel.hidden = !active || panel.dataset.searchVisible === "false";
+  }
+}
+
+function settingFieldSearchText(field) {
+  const input = field.querySelector("input, select, textarea");
+  return [
+    field.dataset.settingsLabel ?? "",
+    field.dataset.settingsHelp ?? "",
+    input?.id ?? "",
+    field.textContent ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filterFeatureGroupsInSettings(query, categoryMatch) {
+  let visible = 0;
+  for (const category of els.settingsFeatures?.querySelectorAll(".feature-category") ?? []) {
+    let categoryVisible = 0;
+    for (const group of category.querySelectorAll("[data-feature-group]")) {
+      const match =
+        !query || categoryMatch || (group.dataset.featureSearch ?? "").includes(query);
+      group.hidden = !match;
+      if (match) categoryVisible += 1;
+    }
+    category.hidden = Boolean(query) && categoryVisible === 0;
+    visible += categoryVisible;
+  }
+  return visible;
+}
+
+function applySettingsSearch() {
+  if (!els.settingsDialog) return;
+  const query = state.settingsQuery.trim().toLowerCase();
+  const navButtons = settingsNavButtons();
+  const panels = settingsPanels();
+  let anyVisible = false;
+  let firstVisible = null;
+  const currentPanel = panels.find(
+    (panel) => panel.dataset.settingsPanel === state.settingsSection
+  );
+  const currentNav = navButtons.find(
+    (button) => button.dataset.settingsCategory === state.settingsSection
+  );
+
+  for (const panel of panels) {
+    const nav = navButtons.find(
+      (button) => button.dataset.settingsCategory === panel.dataset.settingsPanel
+    );
+    const categoryMatch = Boolean(
+      query && (nav?.textContent ?? "").toLowerCase().includes(query)
+    );
+    let visibleFields = 0;
+    for (const field of panel.querySelectorAll(".settings-field")) {
+      const match =
+        !query || categoryMatch || settingFieldSearchText(field).includes(query);
+      field.hidden = !match;
+      if (match) visibleFields += 1;
+    }
+    if (panel.dataset.settingsPanel === "features") {
+      visibleFields += filterFeatureGroupsInSettings(query, categoryMatch);
+    }
+    const panelVisible = !query || categoryMatch || visibleFields > 0;
+    panel.dataset.searchVisible = panelVisible ? "true" : "false";
+    if (nav) nav.hidden = !panelVisible;
+    if (panelVisible && !panel.classList.contains("feature-off")) {
+      anyVisible = true;
+      if (!firstVisible && panel === currentPanel) firstVisible = panel;
+      if (!firstVisible) firstVisible = panel;
+    }
+  }
+
+  if (!query) {
+    for (const panel of panels) panel.dataset.searchVisible = "true";
+    for (const nav of navButtons) nav.hidden = false;
+  }
+
+  if (els.settingsNoMatch) els.settingsNoMatch.hidden = !query || anyVisible;
+
+  const currentVisible =
+    currentPanel?.dataset.searchVisible !== "false" &&
+    currentNav &&
+    !currentNav.hidden &&
+    !currentPanel?.classList.contains("feature-off");
+  if (!currentVisible && firstVisible) {
+    activateSettingsSection(firstVisible.dataset.settingsPanel);
+  } else {
+    updateSettingsPanelVisibility();
+  }
+}
+
+function refreshSettingsDynamic() {
+  if (els.settingsZoomValue) {
+    const zoomed = state.zoom !== null;
+    els.settingsZoomValue.textContent = `${editorFontSize()}px${zoomed ? " (manual zoom)" : ""}`;
+  }
+  if (els.settingsSearchInfo) {
+    if (!state.repository) {
+      els.settingsSearchInfo.textContent =
+        "Open a repository to see index information and rebuild the index.";
+    } else if (state.searchIndexMessage) {
+      els.settingsSearchInfo.textContent = state.searchIndexMessage;
+    } else {
+      els.settingsSearchInfo.textContent = `Search index available for ${state.repository.name}.`;
+    }
+  }
+  if (els.settingsSearchFeatureState) {
+    const on = featureOn("search") && featureOn("search.toolbar");
+    els.settingsSearchFeatureState.textContent = on
+      ? "Search is enabled. Turn it off under Features to hide the toolbar and shortcut."
+      : "Search is turned off. It can be restored under Features.";
+  }
+  const configured = updateSourceConfigured();
+  if (els.settingUpdateSource) {
+    els.settingUpdateSource.textContent = updateSourceLabel();
+  }
+  if (els.settingUpdateStatus) {
+    els.settingUpdateStatus.textContent = configured
+      ? state.updateInfo.status || "No update check has run yet."
+      : "Update checks are inactive until an update source is configured.";
+  }
+  if (els.settingUpdateVersions) {
+    const current = state.version || state.updateInfo.currentVersion;
+    const latest = state.updateInfo.latestVersion;
+    els.settingUpdateVersions.textContent = [
+      current ? `Current v${String(current).replace(/^v/i, "")}` : "",
+      latest ? `Latest v${String(latest).replace(/^v/i, "")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (els.settingUpdateLastChecked) {
+    els.settingUpdateLastChecked.textContent = state.updateInfo.lastChecked
+      ? `Last checked ${new Date(state.updateInfo.lastChecked).toLocaleString()}.`
+      : "No check recorded yet.";
+  }
+  if (els.settingUpdateCheck) {
+    els.settingUpdateCheck.disabled = !configured || state.updateInfo.checking;
+  }
+  if (els.settingsAboutVersion) {
+    els.settingsAboutVersion.textContent = state.version
+      ? `Plainfold v${state.version}`
+      : "Plainfold";
+  }
+  if (els.settingsAboutSource) {
+    els.settingsAboutSource.textContent = updateSourceLabel();
+  }
+  if (els.settingsAboutGithub) {
+    els.settingsAboutGithub.textContent = configured
+      ? `github.com/${UPDATE_OWNER}/${UPDATE_REPO}`
+      : "Repository link not configured.";
+  }
+  renderSettingsRepositories();
+  syncFeatureSwitches();
+}
+
+function openSettings() {
   state.settingsDraftRepository = state.settings.defaultRepository ?? null;
-  els.settingDefaultRepository.value = state.settingsDraftRepository ?? "";
-  els.settingsError.hidden = true;
+  state.settingsDraftFeatures = new Set(
+    Array.isArray(state.settings.disabledFeatures)
+      ? state.settings.disabledFeatures
+      : []
+  );
+  state.settingsDirty = false;
+  state.settingsSaveFailed = false;
+  state.settingsQuery = "";
+  if (els.settingsSearch) els.settingsSearch.value = "";
+  syncSettingsFields();
+  // Show the size actually in use, so a manual zoom is visible here too.
+  if (state.zoom !== null && els.settingFontSize) {
+    els.settingFontSize.value = String(editorFontSize());
+  }
+  showSettingsError("");
+  if (els.settingsSaved) els.settingsSaved.hidden = true;
+  renderFeatures();
+  renderUpdateAutoCheckSwitch();
+  refreshSettingsDynamic();
+  applySettingsSearch();
+  const usablePanels = settingsPanels().filter(
+    (panel) => !panel.classList.contains("feature-off")
+  );
+  const preferred = usablePanels.some(
+    (panel) => panel.dataset.settingsPanel === state.settingsSection
+  )
+    ? state.settingsSection
+    : usablePanels[0]?.dataset.settingsPanel ?? "appearance";
+  activateSettingsSection(preferred);
   els.settingsDialog.showModal();
 }
 
-async function saveSettingsFromForm() {
-  const settings = {
-    theme: els.settingTheme.value,
-    fontFamily: els.settingFontFamily.value.trim() || "Consolas",
-    fontSize: Math.min(
-      48,
-      Math.max(8, Math.round(Number(els.settingFontSize.value) || 14))
-    ),
-    tabWidth: Math.min(
-      16,
-      Math.max(1, Math.round(Number(els.settingTabWidth.value) || 4))
-    ),
-    pinnedLimit: state.savedSettings.pinnedLimit ?? 5,
-    recentLimit: state.savedSettings.recentLimit ?? 5,
-    autosaveMode: els.settingAutosaveMode.value,
-    autosaveIdleSecs: Math.min(
-      60,
-      Math.max(1, Math.round(Number(els.settingAutosaveIdle.value) || 20))
-    ),
-    autosaveIntervalSecs: Math.min(
-      3600,
-      Math.max(120, Math.round(Number(els.settingAutosaveInterval.value) || 120))
-    ),
-    revisionHourly: Math.min(
-      1000,
-      Math.max(0, Math.round(Number(els.settingRevisionHourly.value) || 0))
-    ),
-    revisionDaily: Math.min(
-      1000,
-      Math.max(0, Math.round(Number(els.settingRevisionDaily.value) || 0))
-    ),
-    revisionWeekly: Math.min(
-      1000,
-      Math.max(0, Math.round(Number(els.settingRevisionWeekly.value) || 0))
-    ),
-    revisionMonthly: Math.min(
-      1000,
-      Math.max(0, Math.round(Number(els.settingRevisionMonthly.value) || 0))
-    ),
-    revisionYearly: Math.min(
-      1000,
-      Math.max(0, Math.round(Number(els.settingRevisionYearly.value) || 0))
-    ),
-    defaultSort: els.settingSort.value,
-    defaultRepository: state.settingsDraftRepository,
-    desktopShortcutPrompted: Boolean(state.settings.desktopShortcutPrompted),
+function scheduleSettingsSave() {
+  clearTimeout(state.settingsSaveTimer);
+  state.settingsSaveTimer = setTimeout(() => {
+    state.settingsSaveTimer = null;
+    saveSettingsNow();
+  }, 500);
+}
+
+function flushSettingsSave() {
+  clearTimeout(state.settingsSaveTimer);
+  state.settingsSaveTimer = null;
+  if (state.settingsDirty) return saveSettingsNow();
+  return state.settingsSaveChain.then(
+    (result) => result !== false && !state.settingsSaveFailed
+  );
+}
+
+/**
+ * Auto-save the complete settings object. Requests are serialized so rapid
+ * changes cannot race; each request reads the current fields when it runs.
+ */
+function saveSettingsNow() {
+  clearTimeout(state.settingsSaveTimer);
+  state.settingsSaveTimer = null;
+  if (!state.settingsDirty) return Promise.resolve(true);
+
+  const run = async () => {
+    const { settings, issues } = buildSettingsFromForm();
+    const builtRevision = state.settingsRevision;
+    state.settingsDirty = false;
+    try {
+      const saved = await api.saveSettings(settings);
+      const merged = mergeSettingsResponse(settings, saved);
+      const pending = state.settingsRevision !== builtRevision;
+      const pendingDraft = pending ? new Set(state.settingsDraftFeatures) : null;
+      const fontChanged = merged.fontSize !== state.settings.fontSize;
+      state.savedSettings = merged;
+      state.settingsDraftFeatures = new Set(
+        Array.isArray(merged.disabledFeatures) ? merged.disabledFeatures : []
+      );
+      if (fontChanged) {
+        // A saved font size takes over from any manual zoom.
+        state.zoom = null;
+        saveZoom();
+      }
+      applySettings(merged);
+      if (!pending) {
+        state.settingsDraftRepository = merged.defaultRepository ?? null;
+        syncSettingsFields(merged);
+      }
+      if (pending) {
+        // Changes made while the request was in flight have not been saved.
+        state.settingsDirty = true;
+        if (pendingDraft) {
+          state.settingsDraftFeatures = pendingDraft;
+          state.settings.disabledFeatures = [...pendingDraft];
+          applyFeatureVisibility();
+        }
+      }
+      state.settingsSaveFailed = false;
+      showSettingsError(issues.join(" "));
+      showSavedIndicator();
+      await loadTree();
+      refreshSettingsDynamic();
+      if (pending) scheduleSettingsSave();
+      else setStatus("Settings saved.");
+      return true;
+    } catch (error) {
+      state.settingsDirty = true;
+      state.settingsSaveFailed = true;
+      showSettingsError(errText(error));
+      return false;
+    }
   };
+
+  const task = state.settingsSaveChain.then(run, run);
+  state.settingsSaveChain = task.catch(() => false);
+  return task;
+}
+
+async function closeSettings() {
+  if (state.settingsClosing) return;
+  state.settingsClosing = true;
   try {
-    const saved = await api.saveSettings(settings);
+    const ok = await flushSettingsSave();
+    if (!ok && state.settingsSaveFailed) return;
     els.settingsDialog.close();
-    // A saved font size takes over from any manual zoom.
+  } finally {
+    state.settingsClosing = false;
+  }
+}
+
+function resetSettingsSection(sectionId) {
+  const section = SETTINGS_SECTIONS[sectionId];
+  if (!section) return;
+  for (const key of section.fields) {
+    const element = settingsElement(key);
+    if (!element) continue;
+    const value = DEFAULT_SETTINGS[key];
+    element.value = value === null || value === undefined ? "" : String(value);
+  }
+  if (sectionId === "appearance") {
     state.zoom = null;
+    applyZoom();
     saveZoom();
-    state.savedSettings = { ...state.savedSettings, ...saved };
-    applySettings(saved);
+  }
+  if (sectionId === "repositories") {
+    state.settingsDraftRepository = null;
+    if (els.settingDefaultRepository) els.settingDefaultRepository.value = "";
+  }
+  for (const groupId of section.features) {
+    state.settingsDraftFeatures.delete(groupId);
+    for (const control of controlsForGroup(groupId)) {
+      state.settingsDraftFeatures.delete(control.id);
+    }
+  }
+  state.settings.disabledFeatures = [...state.settingsDraftFeatures];
+  state.settingsDirty = true;
+  state.settingsRevision += 1;
+  applyFeatureVisibility();
+  syncFeatureSwitches();
+  refreshSettingsDynamic();
+  saveSettingsNow();
+}
+
+async function resetAllSettings() {
+  const confirmed = await confirmDialog(
+    "Reset all settings and feature switches to their defaults? Your files, tags, pins, recents, and revisions are kept.",
+    { title: "Reset all settings", kind: "warning" }
+  );
+  if (!confirmed) return;
+  state.settingsDraftRepository = null;
+  state.settingsDraftFeatures = new Set();
+  state.settings.disabledFeatures = [];
+  state.zoom = null;
+  applyZoom();
+  saveZoom();
+  syncSettingsFields({
+    ...DEFAULT_SETTINGS,
+    recentRepositories: state.settings.recentRepositories,
+    lastRepository: state.settings.lastRepository,
+  });
+  if (els.settingDefaultRepository) els.settingDefaultRepository.value = "";
+  state.settingsDirty = true;
+  state.settingsRevision += 1;
+  applyFeatureVisibility();
+  renderFeatures();
+  renderUpdateAutoCheckSwitch();
+  refreshSettingsDynamic();
+  saveSettingsNow();
+}
+
+async function clearRecentRepositories() {
+  if (!savedRepositoryEntries().length) {
+    setStatus("There are no saved repositories to clear.");
+    return;
+  }
+  const confirmed = await confirmDialog(
+    "Clear the saved repository list? Files on disk are never deleted.",
+    { title: "Clear recent repositories", kind: "warning" }
+  );
+  if (!confirmed) return;
+  if (repositories?.configured && typeof repositories.clearRecent === "function") {
+    await repositories.clearRecent();
+    return;
+  }
+  setStatus("Clearing saved repositories arrives in a later update.");
+}
+
+async function rebuildSearchIndex() {
+  if (!state.repository) {
+    setStatus("Open a repository first.");
+    refreshSettingsDynamic();
+    return;
+  }
+  const buttons = [els.maintenanceRescan, els.searchRescan].filter(Boolean);
+  for (const button of buttons) button.disabled = true;
+  setStatus("Rebuilding the search index…");
+  if (els.settingsSearchInfo) {
+    els.settingsSearchInfo.textContent = "Rebuilding the search index…";
+  }
+  try {
+    const indexed = await api.rescan();
     await loadTree();
-    setStatus("Settings saved.");
+    await refreshOrganization();
+    const count = Number(indexed);
+    const text = Number.isFinite(count)
+      ? `Search index rebuilt: ${formatCount(count)} file${count === 1 ? "" : "s"} indexed.`
+      : "Search index rebuilt.";
+    state.searchIndexMessage = text;
+    setStatus(text);
   } catch (error) {
-    els.settingsError.hidden = false;
-    els.settingsError.textContent = errText(error);
+    state.searchIndexMessage = errText(error);
+    setStatus(errText(error));
+  } finally {
+    refreshSettingsDynamic();
+    updateControls();
+  }
+}
+
+async function checkUpdatesNow() {
+  if (!updateSourceConfigured()) {
+    if (els.settingUpdateStatus) {
+      els.settingUpdateStatus.textContent =
+        "Update checks are inactive until an update source is configured.";
+    }
+    return;
+  }
+  state.updateInfo.checking = true;
+  if (els.settingUpdateCheck) els.settingUpdateCheck.disabled = true;
+  try {
+    const result = await checkForUpdate({ currentVersion: state.version });
+    state.updateInfo = {
+      currentVersion: result.currentVersion ?? state.version,
+      latestVersion: result.latestVersion ?? null,
+      lastChecked: Date.now(),
+      checking: false,
+      status: result.error
+        ? result.error
+        : result.updateAvailable
+          ? `Plainfold ${result.latestVersion} is available.`
+          : "Plainfold is up to date.",
+    };
+  } catch (error) {
+    state.updateInfo = {
+      ...state.updateInfo,
+      checking: false,
+      status: errText(error),
+    };
+  } finally {
+    state.updateInfo.checking = false;
+    refreshSettingsDynamic();
   }
 }
 
 async function offerDesktopShortcut() {
+  if (
+    !featureOn("desktopShortcut") ||
+    !featureOn("desktopShortcut.firstRunPrompt")
+  ) {
+    return;
+  }
   let status;
   try {
     status = await api.desktopShortcutStatus();
@@ -2312,6 +3558,97 @@ function wireRootDrop(element) {
   });
 }
 
+function wireSettingsDialog() {
+  const dialog = els.settingsDialog;
+  if (!dialog) return;
+
+  dialog.addEventListener("click", (event) => {
+    const toggle = event.target.closest?.("[data-feature-toggle]");
+    if (toggle && !toggle.disabled) {
+      setFeatureEnabled(
+        toggle.dataset.featureToggle,
+        toggle.getAttribute("aria-checked") !== "true"
+      );
+      return;
+    }
+    const expand = event.target.closest?.("[data-feature-expand]");
+    if (expand) {
+      const groupId = expand.dataset.featureExpand;
+      const controls = $(`feature-controls-${groupId}`);
+      const open = !state.expandedFeatureGroups.has(groupId);
+      if (open) state.expandedFeatureGroups.add(groupId);
+      else state.expandedFeatureGroups.delete(groupId);
+      if (controls) controls.hidden = !open;
+      expand.setAttribute("aria-expanded", String(open));
+      return;
+    }
+    const reset = event.target.closest?.("[data-settings-reset]");
+    if (reset) {
+      resetSettingsSection(reset.dataset.settingsReset);
+      return;
+    }
+    const nav = event.target.closest?.("[data-settings-category]");
+    if (nav) {
+      activateSettingsSection(nav.dataset.settingsCategory);
+    }
+  });
+
+  els.settingsSearch?.addEventListener("input", () => {
+    state.settingsQuery = els.settingsSearch.value;
+    applySettingsSearch();
+  });
+  els.settingsSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.settingsSearch.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      els.settingsSearch.value = "";
+      state.settingsQuery = "";
+      applySettingsSearch();
+    }
+  });
+
+  dialog.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target === els.settingsSearch) return;
+    if (!target.matches?.("input, select, textarea")) return;
+    if (target.tagName === "SELECT" || target.type === "checkbox") return;
+    state.settingsDirty = true;
+    state.settingsRevision += 1;
+    scheduleSettingsSave();
+  });
+
+  dialog.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target === els.settingsSearch) return;
+    if (!target.matches?.("select, input[type='checkbox']")) return;
+    state.settingsDirty = true;
+    state.settingsRevision += 1;
+    saveSettingsNow();
+  });
+
+  // Enter flushes pending text/number edits without closing the dialog.
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    if (!event.target.matches?.("input:not([type='checkbox']), select")) return;
+    event.preventDefault();
+    state.settingsDirty = true;
+    state.settingsRevision += 1;
+    saveSettingsNow();
+  });
+
+  // Escape is the native dialog close gesture; flush before letting it close.
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSettings();
+  });
+
+  dialog.addEventListener("close", () => {
+    if (state.savedIndicatorTimer) clearTimeout(state.savedIndicatorTimer);
+    if (els.settingsSaved) els.settingsSaved.hidden = true;
+    if (state.settingsDirty) saveSettingsNow();
+  });
+}
+
 function wireEvents() {
   wirePaneResizer();
   // The editor sits inside the pane, and wheel events bubble, so one
@@ -2319,27 +3656,29 @@ function wireEvents() {
   wireZoom(els.editorPane);
   els.openRepository.addEventListener("click", chooseRepository);
   els.emptyOpen.addEventListener("click", () => {
-    if (state.repository) createItem(targetFolder(), false);
+    if (state.repository) createItem(targetFolder(), false, { fromEmpty: true });
     else chooseRepository();
   });
 
-  els.rescan.addEventListener("click", async () => {
-    if (!state.repository) return;
-    els.rescan.disabled = true;
-    setStatus("Rebuilding the search index…");
-    try {
-      await api.rescan();
-      await loadTree();
-      await refreshOrganization();
-      // The count is in the status bar now; no need to repeat it here.
-    } catch (error) {
-      setStatus(errText(error));
-    } finally {
-      els.rescan.disabled = false;
-    }
+  els.maintenanceRescan?.addEventListener("click", rebuildSearchIndex);
+  els.searchRescan?.addEventListener("click", rebuildSearchIndex);
+  els.maintenanceClearRecents?.addEventListener("click", clearRecentRepositories);
+  els.maintenanceResetAll?.addEventListener("click", resetAllSettings);
+  els.settingUpdateCheck?.addEventListener("click", checkUpdatesNow);
+  els.resetEditorZoom?.addEventListener("click", resetZoom);
+  els.updateBannerDismiss?.addEventListener("click", () => {
+    if (els.updateBanner) els.updateBanner.hidden = true;
+  });
+  els.updateBannerNotes?.addEventListener("click", () => {
+    setStatus(
+      updateSourceConfigured()
+        ? "Release notes are available with the update checker."
+        : "Release notes are not available until an update source is configured."
+    );
   });
 
   els.settingsButton.addEventListener("click", openSettings);
+  wireSettingsDialog();
   els.pinnedTitle.addEventListener("click", () => openLimitDialog("pinned"));
   els.recentTitle.addEventListener("click", () => openLimitDialog("recent"));
   els.limitForm.addEventListener("submit", (event) => {
@@ -2356,6 +3695,9 @@ function wireEvents() {
     if (selected) {
       state.settingsDraftRepository = selected;
       els.settingDefaultRepository.value = selected;
+      state.settingsDirty = true;
+      state.settingsRevision += 1;
+      saveSettingsNow();
     }
   });
   els.useCurrentRepository.addEventListener("click", () => {
@@ -2365,19 +3707,20 @@ function wireEvents() {
     }
     state.settingsDraftRepository = state.repository.path;
     els.settingDefaultRepository.value = state.repository.path;
+    state.settingsDirty = true;
+    state.settingsRevision += 1;
+    saveSettingsNow();
   });
   els.clearDefaultRepository.addEventListener("click", () => {
     state.settingsDraftRepository = null;
     els.settingDefaultRepository.value = "";
+    state.settingsDirty = true;
+    state.settingsRevision += 1;
+    saveSettingsNow();
   });
 
-  els.settingsForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    saveSettingsFromForm();
-  });
   els.promptCancel.addEventListener("click", () => els.promptDialog.close("cancel"));
   els.tagsCancel.addEventListener("click", () => els.tagsDialog.close("cancel"));
-  els.settingsCancel.addEventListener("click", () => els.settingsDialog.close("cancel"));
 
   els.sortAlpha.addEventListener("click", () => sortAlphabetically(targetFolder()));
   els.newFile.addEventListener("click", () => createItem(targetFolder(), false));
@@ -2418,6 +3761,7 @@ function wireEvents() {
     hideBrandPopover();
   });
   els.treeFilter.addEventListener("input", () => {
+    if (!featureOn("treeFilter") || !featureOn("treeFilter.input")) return;
     state.fileFilter = els.treeFilter.value.trim();
     renderTree();
     updateControls();
@@ -2436,6 +3780,7 @@ function wireEvents() {
   wireRootDrop(els.treeEmpty);
 
   els.search.addEventListener("input", () => {
+    if (!featureOn("search") || !featureOn("search.toolbar")) return;
     clearTimeout(state.searchTimer);
     const query = els.search.value.trim();
     if (!query) {
@@ -2509,7 +3854,7 @@ function wireEvents() {
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault();
-      focusSearch();
+      if (featureOn("search") && featureOn("search.shortcut")) focusSearch();
     } else if (event.key === "Escape") {
       hideContextMenu();
       if (!els.searchResults.hidden) hideResults();
@@ -2535,6 +3880,9 @@ function wireEvents() {
         els.tagsInput === document.activeElement;
       if (typing) return;
       event.preventDefault();
+      if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
+        return;
+      }
       if (event.shiftKey) redo();
       else undo();
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
@@ -2543,11 +3891,14 @@ function wireEvents() {
         els.search === document.activeElement;
       if (typing) return;
       event.preventDefault();
+      if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
+        return;
+      }
       redo();
     } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
       // Screen readers and browsers use Ctrl+0 for "actual size" too.
       event.preventDefault();
-      resetZoom();
+      if (featureOn("zoom") && featureOn("zoom.resetShortcut")) resetZoom();
     }
   });
   window.addEventListener("resize", hideContextMenu);
@@ -2619,9 +3970,11 @@ function wireEvents() {
 
   listen("repository-changed", async (event) => {
     if (!state.repository) return;
+    if (!featureOn("watcher")) return;
     const paths = event.payload?.paths ?? [];
     await loadTree();
     await refreshOrganization();
+    if (!featureOn("watcher.autoReload")) return;
     if (state.moving || !state.currentFile) return;
     const current = state.currentFile.path;
     const affected = paths.some(
@@ -2643,6 +3996,7 @@ function wireEvents() {
       return;
     }
 
+    const showNotice = featureOn("watcher.notice");
     if (state.dirty) {
       // Pausing again is idempotent; only warn when the message is not
       // already on screen, so a dismissed warning stays dismissed.
@@ -2650,12 +4004,14 @@ function wireEvents() {
       clearAutosave();
       const warning =
         "This file changed on disk. Your unsaved edits are kept; save when ready.";
-      if (els.notice.hidden || els.noticeText.textContent !== warning) {
+      if (showNotice && (els.notice.hidden || els.noticeText.textContent !== warning)) {
         setNotice(warning, "warn");
       }
     } else {
       await reloadCurrent(true);
-      setNotice("This file changed on disk and was reloaded.", "info");
+      if (showNotice) {
+        setNotice("This file changed on disk and was reloaded.", "info");
+      }
     }
   }).catch(() => {});
 }
@@ -2676,6 +4032,7 @@ async function init() {
   state.zoom = loadZoom();
   applyTheme();
   applySidebarWidth(loadSidebarWidth());
+  applyFeatureVisibility();
   updateControls();
   updateStatusLeft();
   try {
