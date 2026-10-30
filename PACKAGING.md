@@ -28,7 +28,7 @@ Install test checklist:
 4. Confirm the taskbar icon is the page-with-cursor icon.
 5. Confirm the Start Menu entry. For MSI, confirm the Desktop shortcut. For NSIS, confirm the finish-page Desktop shortcut option is checked by default.
 6. Open a vault, create a file, type text, save with Ctrl+S, close, and reopen. The text is still on disk.
-7. Confirm no network access is requested.
+7. Confirm network behavior. With the placeholder update source, launch makes no request. After configuring a real source, the only request is the optional GitHub Releases check; turn off automatic checks in Settings > Updates and confirm a launch makes no request. Confirm no other network activity and no telemetry.
 
 ## Debian family (Debian, Ubuntu, Mint, Pop! OS)
 
@@ -98,6 +98,8 @@ On first launch, accept the Desktop shortcut prompt and confirm `Plainfold.deskt
 Artifacts are uploaded per job. A release is only complete after the Windows, Debian-family, and Fedora-family install tests above have been performed on real machines or VMs.
 
 ## Verification performed
+
+The results below cover v1.1.27. The v1.2.0 round builds the front-end bundle and the release binary only, so it produces no installers.
 
 This build was verified as follows:
 
