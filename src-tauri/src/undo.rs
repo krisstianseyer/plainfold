@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
-use crate::paths::Vault;
+use crate::paths::Repository;
 
 /// How many file-system steps Plainfold remembers for Undo.
 pub const LIMIT: usize = 100;
 
-/// A copy of a deleted file or folder, kept outside the vault until the undo
+/// A copy of a deleted file or folder, kept outside the repository until the undo
 /// window closes so the deletion itself can be reversed.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +41,7 @@ struct Entry {
     action: UndoAction,
 }
 
-/// History of reversible vault steps. The open file's text is undone inside
+/// History of reversible repository steps. The open file's text is undone inside
 /// the editor, so this covers file-system steps only.
 #[derive(Default)]
 pub struct History {
@@ -94,7 +94,7 @@ impl History {
     }
 }
 
-/// Copy an item out of the vault before it is deleted. Folders are copied
+/// Copy an item out of the repository before it is deleted. Folders are copied
 /// whole, without following symbolic links.
 pub fn capture(backup_root: &Path, relative: &str, absolute: &Path) -> AppResult<TrashedEntry> {
     let metadata = std::fs::symlink_metadata(absolute)
@@ -155,21 +155,21 @@ fn sanitize(relative: &str) -> String {
     relative.replace('/', "__").replace('\\', "__")
 }
 
-/// Put a kept copy back in the vault. An occupied path gets a numbered name
+/// Put a kept copy back in the repository. An occupied path gets a numbered name
 /// instead of overwriting anything.
-pub fn restore(vault: &Vault, entry: &TrashedEntry) -> AppResult<String> {
+pub fn restore(repository: &Repository, entry: &TrashedEntry) -> AppResult<String> {
     let backup = PathBuf::from(&entry.backup);
     if std::fs::symlink_metadata(&backup).is_err() {
         return Err(AppError::new("The undo copy is no longer available."));
     }
     let relative = crate::paths::normalize_relative(&entry.path)?;
-    let target = free_name(&vault.root().join(relative));
+    let target = free_name(&repository.root().join(relative));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|_| AppError::new("The folder for that item could not be recreated."))?;
     }
     copy_tree(&backup, &target)?;
-    Ok(crate::paths::relative_to(vault.root(), &target)
+    Ok(crate::paths::relative_to(repository.root(), &target)
         .unwrap_or_else(|| entry.path.clone()))
 }
 
@@ -231,13 +231,13 @@ mod tests {
     #[test]
     fn copies_restore_to_their_original_path() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let backup = backup_of(&dir);
         std::fs::write(dir.path().join("note.txt"), b"text").unwrap();
 
         let entry = capture(&backup, "note.txt", &dir.path().join("note.txt")).unwrap();
         std::fs::remove_file(dir.path().join("note.txt")).unwrap();
-        assert_eq!(restore(&vault, &entry).unwrap(), "note.txt");
+        assert_eq!(restore(&repository, &entry).unwrap(), "note.txt");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
             "text"
@@ -247,13 +247,13 @@ mod tests {
     #[test]
     fn restore_never_overwrites_a_new_file() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let backup = backup_of(&dir);
         std::fs::write(dir.path().join("note.txt"), b"old").unwrap();
         let entry = capture(&backup, "note.txt", &dir.path().join("note.txt")).unwrap();
         std::fs::write(dir.path().join("note.txt"), b"new").unwrap();
 
-        assert_eq!(restore(&vault, &entry).unwrap(), "note (1).txt");
+        assert_eq!(restore(&repository, &entry).unwrap(), "note (1).txt");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
             "new"
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn folders_are_copied_whole_and_restored() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let backup = backup_of(&dir);
         std::fs::create_dir_all(dir.path().join("project/inner")).unwrap();
         std::fs::write(dir.path().join("project/inner/note.txt"), b"keep").unwrap();
@@ -275,7 +275,7 @@ mod tests {
         let entry = capture(&backup, "project", &dir.path().join("project")).unwrap();
         assert!(entry.is_dir);
         std::fs::remove_dir_all(dir.path().join("project")).unwrap();
-        assert_eq!(restore(&vault, &entry).unwrap(), "project");
+        assert_eq!(restore(&repository, &entry).unwrap(), "project");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("project/inner/note.txt")).unwrap(),
             "keep"

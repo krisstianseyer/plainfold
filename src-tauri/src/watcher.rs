@@ -8,7 +8,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::paths::{relative_to, Vault};
+use crate::paths::{relative_to, Repository};
 use crate::state::AppState;
 use crate::tree::indexable_body;
 
@@ -22,7 +22,7 @@ struct ChangedPayload {
 pub fn start(
     app: AppHandle,
     state: Arc<AppState>,
-    vault: Vault,
+    repository: Repository,
 ) -> Result<RecommendedWatcher, String> {
     let (sender, receiver) = mpsc::channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
@@ -35,9 +35,9 @@ pub fn start(
     .map_err(|_| "The file watcher could not be started.".to_string())?;
 
     watcher
-        .watch(vault.root(), RecursiveMode::Recursive)
-        .map_err(|_| "The file watcher could not watch this vault.".to_string())?;
-    crate::log::path_event("info", "watcher-started", vault.root());
+        .watch(repository.root(), RecursiveMode::Recursive)
+        .map_err(|_| "The file watcher could not watch this repository.".to_string())?;
+    crate::log::path_event("info", "watcher-started", repository.root());
 
     let weak: Weak<AppState> = Arc::downgrade(&state);
     std::thread::spawn(move || {
@@ -61,7 +61,7 @@ pub fn start(
             let Some(state) = weak.upgrade() else {
                 break;
             };
-            process_batch(&state, &app, &vault, &batch);
+            process_batch(&state, &app, &repository, &batch);
         }
     });
 
@@ -71,7 +71,7 @@ pub fn start(
 fn process_batch(
     state: &Arc<AppState>,
     app: &AppHandle,
-    vault: &Vault,
+    repository: &Repository,
     batch: &HashSet<PathBuf>,
 ) {
     let mut changed = Vec::new();
@@ -85,13 +85,13 @@ fn process_batch(
         {
             continue;
         }
-        let Some(relative) = relative_for(vault, path) else {
+        let Some(relative) = relative_for(repository, path) else {
             continue;
         };
         if relative.is_empty() || crate::paths::is_revisions_path(&relative) {
             continue;
         }
-        collect_path(vault, path, &relative, &mut jobs, 0);
+        collect_path(repository, path, &relative, &mut jobs, 0);
         changed.push(relative);
     }
 
@@ -104,8 +104,8 @@ fn process_batch(
             Ok(inner) => inner,
             Err(_) => return,
         };
-        if inner.vault.as_ref().map(|current| current.root()) != Some(vault.root()) {
-            crate::log::line("warn", "watcher batch ignored: vault changed");
+        if inner.repository.as_ref().map(|current| current.root()) != Some(repository.root()) {
+            crate::log::line("warn", "watcher batch ignored: repository changed");
             return;
         }
         if let Some(index) = inner.index.as_mut() {
@@ -160,8 +160,8 @@ fn process_batch(
         paths: changed,
         kind: "changed",
     };
-    if app.emit("vault-changed", payload).is_err() {
-        crate::log::line("error", "could not emit a vault change event");
+    if app.emit("repository-changed", payload).is_err() {
+        crate::log::line("error", "could not emit a repository change event");
     }
 }
 
@@ -176,15 +176,15 @@ enum Job {
     },
 }
 
-fn relative_for(vault: &Vault, path: &Path) -> Option<String> {
+fn relative_for(repository: &Repository, path: &Path) -> Option<String> {
     if path.exists() {
-        return vault.relative(path);
+        return repository.relative(path);
     }
-    relative_to(vault.root(), path)
+    relative_to(repository.root(), path)
 }
 
 fn collect_path(
-    vault: &Vault,
+    repository: &Repository,
     absolute: &Path,
     relative: &str,
     jobs: &mut Vec<Job>,
@@ -214,10 +214,10 @@ fn collect_path(
                     continue;
                 }
                 let path = entry.path();
-                let Some(child_relative) = vault.relative(&path) else {
+                let Some(child_relative) = repository.relative(&path) else {
                     continue;
                 };
-                collect_path(vault, &path, &child_relative, jobs, depth + 1);
+                collect_path(repository, &path, &child_relative, jobs, depth + 1);
             }
         }
         return;
@@ -230,7 +230,7 @@ fn collect_path(
     let mtime = meta
         .modified()
         .ok()
-        .map(crate::vault::system_ms)
+        .map(crate::repository::system_ms)
         .unwrap_or_default();
     jobs.push(Job::Upsert {
         relative: relative.to_string(),
@@ -251,16 +251,16 @@ mod tests {
     #[test]
     fn unchanged_files_are_not_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         std::fs::write(dir.path().join("note.txt"), b"hello world\n").unwrap();
         let meta = std::fs::metadata(dir.path().join("note.txt")).unwrap();
         let mtime = meta
             .modified()
             .ok()
-            .map(crate::vault::system_ms)
+            .map(crate::repository::system_ms)
             .unwrap_or_default();
-        let database = index_database_path(dir.path(), vault.root());
-        let mut index = Index::open(&database, vault.root()).unwrap();
+        let database = index_database_path(dir.path(), repository.root());
+        let mut index = Index::open(&database, repository.root()).unwrap();
         index
             .upsert_file("note.txt", "note.txt", meta.len() as i64, mtime, Some("hello world\n"))
             .unwrap();
@@ -274,18 +274,18 @@ mod tests {
     #[test]
     fn edited_files_stay_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let path = dir.path().join("note.txt");
         std::fs::write(&path, b"one\n").unwrap();
         let before = std::fs::metadata(&path).unwrap();
-        let database = index_database_path(dir.path(), vault.root());
-        let mut index = Index::open(&database, vault.root()).unwrap();
+        let database = index_database_path(dir.path(), repository.root());
+        let mut index = Index::open(&database, repository.root()).unwrap();
         index
             .upsert_file(
                 "note.txt",
                 "note.txt",
                 before.len() as i64,
-                before.modified().ok().map(crate::vault::system_ms).unwrap_or_default(),
+                before.modified().ok().map(crate::repository::system_ms).unwrap_or_default(),
                 Some("one\n"),
             )
             .unwrap();
@@ -293,7 +293,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&path, b"one and two\n").unwrap();
         let after = std::fs::metadata(&path).unwrap();
-        let after_mtime = after.modified().ok().map(crate::vault::system_ms).unwrap_or_default();
+        let after_mtime = after.modified().ok().map(crate::repository::system_ms).unwrap_or_default();
         let recorded = index.file_meta("note.txt").unwrap();
         assert!(
             recorded.0 != after.len() as i64 || recorded.1 != after_mtime,

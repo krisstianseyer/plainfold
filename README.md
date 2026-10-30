@@ -1,6 +1,6 @@
 # Plainfold
 
-Plainfold is a desktop app for Windows and Linux that edits plain text files in an ordinary folder. A vault is just a folder you choose. Every note is a real file. Plainfold never renders Markdown or HTML, never executes scripts, and never touches the network.
+Plainfold is a desktop app for Windows and Linux that edits plain text files in an ordinary folder. A repository is just a folder you choose. Every note is a real file. Plainfold never renders Markdown or HTML, never executes scripts, and never touches the network.
 
 ## Status
 
@@ -8,7 +8,7 @@ GitHub repository: coming soon.
 
 The v1 feature set in `instructions.md` is implemented:
 
-- Vault tree with folders first, name/modified/size sort, one-click alphabetical sort, pins, recents, tags, drag-to-order, and drag-to-move between folders.
+- Repository tree with folders first, name/modified/size sort, one-click alphabetical sort, pins, recents, tags, drag-to-order, and drag-to-move between folders.
 - Create nested files and folders, with full name validation, and move items to the operating system trash.
 - CodeMirror 6 editing with extension-based syntax highlighting only.
 - UTF-8 (with optional BOM) and BOM-marked UTF-16 LE/BE, preserving encoding, BOM, and CRLF/LF on save.
@@ -16,15 +16,15 @@ The v1 feature set in `instructions.md` is implemented:
 - FTS5 search over names and contents, with line numbers and click-to-line results.
 - Settings in the OS config folder, written atomically, with safe fallback on corruption.
 - A file watcher that reloads clean files and preserves unsaved edits with a notice.
-- Unsaved-change prompts offer Save, Discard, and Cancel for switching files, changing vaults, deleting, and closing.
+- Unsaved-change prompts offer Save, Discard, and Cancel for switching files, changing repositories, deleting, and closing.
 - Autosave modes: off, after idle, or fixed interval. Defaults: off, idle 20 seconds, interval 120 seconds. Autosave runs only while the open file has unsaved edits.
-- Compressed revisions stored in the vault's hidden `.revisions` folder; restore from the file context menu. Retention uses Grandfather-Father-Son rotation with configurable hourly, daily, weekly, monthly, and yearly tiers.
+- Compressed revisions stored in the repository's hidden `.revisions` folder; restore from the file context menu. Retention uses Grandfather-Father-Son rotation with configurable hourly, daily, weekly, monthly, and yearly tiers.
 - Non-text files (images, audio, video, PDF, Office, Photoshop, archives, executables) open in the OS default app. Text and script formats stay in Plainfold.
-- Pinned and Recent context actions: open, pin/unpin, remove from Recent, reveal in the vault tree, tags, and move to the vault root. Settings control how many entries each section shows.
-- Vault tree filter for partial names, paths, or extensions, with `*` and `?` wildcards; matching folders keep their contents visible.
+- Pinned and Recent context actions: open, pin/unpin, remove from Recent, reveal in the repository tree, tags, and move to the repository root. Clicking the Pinned or Recent heading opens a popup that sets how many entries the section shows.
+- Repository tree filter for partial names, paths, or extensions, with `*` and `?` wildcards; matching folders keep their contents visible.
 - Resizable sidebar pane; drag the divider, use arrow keys, or double-click to reset.
-- Plain-text links: `[[vault-relative/path]]`; Ctrl+click (Cmd+click on macOS) opens the linked file.
-- App version in the status bar and a GitHub repository placeholder.
+- Plain-text links: `[[repository-relative/path]]`; Ctrl+click (Cmd+click on macOS) opens the linked file.
+- App version under the Plainfold wordmark, a GitHub repository placeholder in the centre of the status bar, repository folder/file counts on the left, and words, characters, and size of the open file on the right.
 - No framework on the front end; CodeMirror is the only editor dependency.
 
 Desktop shortcuts:

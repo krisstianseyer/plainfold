@@ -8,7 +8,7 @@ use crate::atomic::atomic_write;
 use crate::encoding::{self, Eol, TextEncoding, MAX_DISPLAY_BYTES, MAX_EDIT_BYTES};
 use crate::errors::{AppError, AppResult};
 use crate::names;
-use crate::paths::{normalize_relative_allow_empty, Vault};
+use crate::paths::{normalize_relative_allow_empty, Repository};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,8 +41,8 @@ pub struct CreatedItem {
     pub is_dir: bool,
 }
 
-pub fn read_file(vault: &Vault, relative: &str) -> AppResult<FileRead> {
-    let absolute = vault.resolve_existing(relative)?;
+pub fn read_file(repository: &Repository, relative: &str) -> AppResult<FileRead> {
+    let absolute = repository.resolve_existing(relative)?;
     let metadata = std::fs::metadata(&absolute)
         .map_err(|_| AppError::new("The file no longer exists."))?;
     if !metadata.is_file() {
@@ -159,24 +159,24 @@ fn read_prefix(path: &Path, limit: u64) -> AppResult<Vec<u8>> {
 }
 
 pub fn save_file(
-    vault: &Vault,
+    repository: &Repository,
     relative: &str,
     content: &str,
     encoding_id: &str,
     eol_id: &str,
 ) -> AppResult<SaveOutcome> {
-    save_file_with_revisions(vault, relative, content, encoding_id, eol_id, None)
+    save_file_with_revisions(repository, relative, content, encoding_id, eol_id, None)
 }
 
 pub fn save_file_with_revisions(
-    vault: &Vault,
+    repository: &Repository,
     relative: &str,
     content: &str,
     encoding_id: &str,
     eol_id: &str,
     retention: Option<crate::revisions::Retention>,
 ) -> AppResult<SaveOutcome> {
-    let absolute = vault.resolve_for_write(relative)?;
+    let absolute = repository.resolve_for_write(relative)?;
     let metadata = std::fs::metadata(&absolute)
         .map_err(|_| AppError::new("The file no longer exists."))?;
     if !metadata.is_file() {
@@ -216,7 +216,7 @@ pub fn save_file_with_revisions(
     }
     if let Some(retention) = retention {
         if existing != bytes {
-            if let Err(error) = crate::revisions::capture(vault, relative, &existing, &retention) {
+            if let Err(error) = crate::revisions::capture(repository, relative, &existing, &retention) {
                 crate::log::line("warn", &format!("revision capture failed: {error}"));
             }
         }
@@ -232,15 +232,15 @@ pub fn save_file_with_revisions(
     })
 }
 
-pub fn read_text(vault: &Vault, relative: &str) -> AppResult<String> {
-    let absolute = vault.resolve_existing(relative)?;
+pub fn read_text(repository: &Repository, relative: &str) -> AppResult<String> {
+    let absolute = repository.resolve_existing(relative)?;
     let bytes = std::fs::read(&absolute)
         .map_err(|_| AppError::new("The file could not be read."))?;
     Ok(encoding::decode(&bytes).text)
 }
 
 pub fn create_item(
-    vault: &Vault,
+    repository: &Repository,
     parent: &str,
     name: &str,
     is_dir: bool,
@@ -248,9 +248,9 @@ pub fn create_item(
     let segments = names::validate_name(name, cfg!(windows))?;
     let parent_path = normalize_relative_allow_empty(parent)?;
     let parent_absolute = if parent_path.as_os_str().is_empty() {
-        vault.root().to_path_buf()
+        repository.root().to_path_buf()
     } else {
-        vault.resolve_dir(parent)?
+        repository.resolve_dir(parent)?
     };
 
     let mut current_relative = parent_path.clone();
@@ -259,7 +259,7 @@ pub fn create_item(
         current_relative.push(segment);
         final_absolute.push(segment);
         let relative = current_relative.to_string_lossy().replace('\\', "/");
-        final_absolute = vault.ensure_dir(&relative)?;
+        final_absolute = repository.ensure_dir(&relative)?;
     }
 
     let leaf = segments.last().expect("validated name has a segment");
@@ -295,7 +295,7 @@ pub fn create_item(
     })
 }
 
-pub fn move_item(vault: &Vault, source: &str, target_parent: &str) -> AppResult<String> {
+pub fn move_item(repository: &Repository, source: &str, target_parent: &str) -> AppResult<String> {
     let source_path = crate::paths::normalize_relative(source)?;
     let source_parent = source_path
         .parent()
@@ -306,9 +306,9 @@ pub fn move_item(vault: &Vault, source: &str, target_parent: &str) -> AppResult<
         .map(|value| value.to_string_lossy().to_string())
         .ok_or_else(|| AppError::new("That item cannot be moved."))?;
     let source_parent_absolute = if source_parent.is_empty() {
-        vault.root().to_path_buf()
+        repository.root().to_path_buf()
     } else {
-        vault.resolve_dir(&source_parent)?
+        repository.resolve_dir(&source_parent)?
     };
     let source_absolute = source_parent_absolute.join(&leaf);
     let metadata = std::fs::symlink_metadata(&source_absolute)
@@ -323,9 +323,9 @@ pub fn move_item(vault: &Vault, source: &str, target_parent: &str) -> AppResult<
         return Ok(source.to_string());
     }
     let target_parent_absolute = if target_parent_relative.is_empty() {
-        vault.root().to_path_buf()
+        repository.root().to_path_buf()
     } else {
-        vault.resolve_dir(&target_parent_relative)?
+        repository.resolve_dir(&target_parent_relative)?
     };
     let source_canonical = std::fs::canonicalize(&source_absolute)
         .map_err(|_| AppError::new("The item no longer exists."))?;
@@ -353,9 +353,9 @@ pub fn move_item(vault: &Vault, source: &str, target_parent: &str) -> AppResult<
     Ok(target_relative)
 }
 
-pub fn delete_item(vault: &Vault, relative: &str) -> AppResult<()> {
+pub fn delete_item(repository: &Repository, relative: &str) -> AppResult<()> {
     if relative.is_empty() {
-        return Err(AppError::new("The vault folder cannot be deleted from the app."));
+        return Err(AppError::new("The repository folder cannot be deleted from the app."));
     }
     let normalized = crate::paths::normalize_relative(relative)?;
     let parent = normalized
@@ -367,9 +367,9 @@ pub fn delete_item(vault: &Vault, relative: &str) -> AppResult<()> {
         .map(|value| value.to_string_lossy().to_string())
         .ok_or_else(|| AppError::new("That item cannot be deleted."))?;
     let parent_absolute = if parent.is_empty() {
-        vault.root().to_path_buf()
+        repository.root().to_path_buf()
     } else {
-        vault.resolve_dir(&parent)?
+        repository.resolve_dir(&parent)?
     };
     let target = parent_absolute.join(&leaf);
     let metadata = std::fs::symlink_metadata(&target)
@@ -403,13 +403,13 @@ mod tests {
     #[test]
     fn creates_nested_items_and_refuses_duplicates() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        let created = create_item(&vault, "", "notes/2026/day.txt", false).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        let created = create_item(&repository, "", "notes/2026/day.txt", false).unwrap();
         assert_eq!(created.path, "notes/2026/day.txt");
         assert!(dir.path().join("notes/2026/day.txt").is_file());
-        assert!(create_item(&vault, "", "notes/2026/day.txt", false).is_err());
+        assert!(create_item(&repository, "", "notes/2026/day.txt", false).is_err());
 
-        let folder = create_item(&vault, "", "notes/2026/archive", true).unwrap();
+        let folder = create_item(&repository, "", "notes/2026/archive", true).unwrap();
         assert!(folder.is_dir);
         assert!(dir.path().join("notes/2026/archive").is_dir());
     }
@@ -419,11 +419,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("note.txt");
         std::fs::write(&path, b"\xEF\xBB\xBFone\r\ntwo\r\n").unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        let read = read_file(&vault, "note.txt").unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        let read = read_file(&repository, "note.txt").unwrap();
         assert_eq!(read.content, "one\ntwo\n");
         save_file(
-            &vault,
+            &repository,
             "note.txt",
             "three\nfour\n",
             "utf-8-bom",
@@ -439,27 +439,27 @@ mod tests {
     #[test]
     fn moves_files_and_folders_without_overwriting() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        create_item(&vault, "", "folder/note.txt", false).unwrap();
-        create_item(&vault, "", "archive/other.txt", false).unwrap();
-        create_item(&vault, "", "folder/inner/again.txt", false).unwrap();
-        create_item(&vault, "", "archive/again.txt", false).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        create_item(&repository, "", "folder/note.txt", false).unwrap();
+        create_item(&repository, "", "archive/other.txt", false).unwrap();
+        create_item(&repository, "", "folder/inner/again.txt", false).unwrap();
+        create_item(&repository, "", "archive/again.txt", false).unwrap();
 
         assert_eq!(
-            move_item(&vault, "folder/note.txt", "archive").unwrap(),
+            move_item(&repository, "folder/note.txt", "archive").unwrap(),
             "archive/note.txt"
         );
         assert!(!dir.path().join("folder/note.txt").exists());
         assert!(dir.path().join("archive/note.txt").is_file());
-        assert!(move_item(&vault, "folder/inner/again.txt", "archive").is_err());
-        assert!(move_item(&vault, "folder", "folder/inner").is_err());
+        assert!(move_item(&repository, "folder/inner/again.txt", "archive").is_err());
+        assert!(move_item(&repository, "folder", "folder/inner").is_err());
     }
 
     #[test]
     fn saving_captures_previous_content_as_revision() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        create_item(&vault, "", "note.txt", false).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        create_item(&repository, "", "note.txt", false).unwrap();
         let retention = crate::revisions::Retention {
             hourly: 24,
             daily: 7,
@@ -467,14 +467,14 @@ mod tests {
             monthly: 12,
             yearly: 100,
         };
-        save_file_with_revisions(&vault, "note.txt", "first\n", "utf-8", "lf", Some(retention))
+        save_file_with_revisions(&repository, "note.txt", "first\n", "utf-8", "lf", Some(retention))
             .unwrap();
-        save_file_with_revisions(&vault, "note.txt", "second\n", "utf-8", "lf", Some(retention))
+        save_file_with_revisions(&repository, "note.txt", "second\n", "utf-8", "lf", Some(retention))
             .unwrap();
-        let revisions = crate::revisions::list(&vault, "note.txt").unwrap();
+        let revisions = crate::revisions::list(&repository, "note.txt").unwrap();
         assert_eq!(revisions.len(), 1);
         let id = &revisions[0].id;
-        crate::revisions::restore(&vault, "note.txt", id, &retention).unwrap();
+        crate::revisions::restore(&repository, "note.txt", id, &retention).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
             "first\n"
@@ -487,10 +487,10 @@ mod tests {
         std::fs::write(dir.path().join("image.png"), b"\x89PNG\r\n\x1a\n").unwrap();
         std::fs::write(dir.path().join("blob.foo"), b"abc\0def").unwrap();
         std::fs::write(dir.path().join("note.foo"), b"plain text\n").unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        assert!(read_file(&vault, "image.png").unwrap().external);
-        assert!(read_file(&vault, "blob.foo").unwrap().external);
-        let text = read_file(&vault, "note.foo").unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        assert!(read_file(&repository, "image.png").unwrap().external);
+        assert!(read_file(&repository, "blob.foo").unwrap().external);
+        let text = read_file(&repository, "note.foo").unwrap();
         assert!(!text.external);
         assert_eq!(text.content, "plain text\n");
     }
@@ -500,8 +500,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.txt");
         std::fs::write(&path, vec![b'a'; (MAX_EDIT_BYTES + 1) as usize]).unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        let read = read_file(&vault, "large.txt").unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
+        let read = read_file(&repository, "large.txt").unwrap();
         assert!(read.read_only);
         assert!(read.notice.unwrap().contains("5 MB"));
     }
@@ -510,14 +510,14 @@ mod tests {
     fn save_rejects_encoding_or_line_ending_changes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.txt"), b"one\r\ntwo\r\n").unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        assert!(save_file(&vault, "note.txt", "three\n", "utf-8", "lf").is_err());
+        let repository = Repository::open(dir.path()).unwrap();
+        assert!(save_file(&repository, "note.txt", "three\n", "utf-8", "lf").is_err());
         assert_eq!(
             std::fs::read(dir.path().join("note.txt")).unwrap(),
             b"one\r\ntwo\r\n"
         );
         assert!(save_file(
-            &vault,
+            &repository,
             "note.txt",
             "three\n",
             "utf-16le",
@@ -530,9 +530,9 @@ mod tests {
     fn save_rejects_content_that_grows_past_the_limit() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.txt"), b"small").unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let big = "a".repeat((MAX_EDIT_BYTES + 1) as usize);
-        assert!(save_file(&vault, "note.txt", &big, "utf-8", "lf").is_err());
+        assert!(save_file(&repository, "note.txt", &big, "utf-8", "lf").is_err());
         assert_eq!(std::fs::read(dir.path().join("note.txt")).unwrap(), b"small");
     }
 }

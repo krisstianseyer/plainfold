@@ -13,7 +13,7 @@ pub mod settings;
 pub mod state;
 pub mod tree;
 pub mod undo;
-pub mod vault;
+pub mod repository;
 pub mod watcher;
 
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
-            commands::open_vault,
+            commands::open_repository,
             commands::list_tree,
             commands::read_file,
             commands::open_external,

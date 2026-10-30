@@ -5,13 +5,13 @@ use crate::errors::{AppError, AppResult};
 pub const REVISIONS_DIR: &str = ".revisions";
 
 /// A user-selected folder. Every operation resolves through this type so a
-/// path can never escape the canonical vault root.
+/// path can never escape the canonical repository root.
 #[derive(Debug, Clone)]
-pub struct Vault {
+pub struct Repository {
     root: PathBuf,
 }
 
-impl Vault {
+impl Repository {
     pub fn open(path: &Path) -> AppResult<Self> {
         let canonical = std::fs::canonicalize(path)
             .map_err(|_| AppError::new("That folder could not be opened."))?;
@@ -39,7 +39,7 @@ impl Vault {
         let canonical = std::fs::canonicalize(&joined)
             .map_err(|_| AppError::new("The file or folder no longer exists."))?;
         if !is_inside(&self.root, &canonical) {
-            return Err(AppError::new("That path is outside the vault."));
+            return Err(AppError::new("That path is outside the repository."));
         }
         Ok(canonical)
     }
@@ -58,12 +58,12 @@ impl Vault {
         let canonical = std::fs::canonicalize(&joined)
             .map_err(|_| AppError::new("The file no longer exists."))?;
         if !is_inside(&self.root, &canonical) {
-            return Err(AppError::new("That path is outside the vault."));
+            return Err(AppError::new("That path is outside the repository."));
         }
         Ok(canonical)
     }
 
-    /// Resolve a parent folder that already exists and is inside the vault.
+    /// Resolve a parent folder that already exists and is inside the repository.
     pub fn resolve_dir(&self, relative: &str) -> AppResult<PathBuf> {
         let resolved = self.resolve_existing(relative)?;
         let metadata = std::fs::metadata(&resolved)
@@ -97,7 +97,7 @@ impl Vault {
         let canonical = std::fs::canonicalize(&joined)
             .map_err(|_| AppError::new("The folder could not be created."))?;
         if !is_inside(&self.root, &canonical) {
-            return Err(AppError::new("That path is outside the vault."));
+            return Err(AppError::new("That path is outside the repository."));
         }
         let metadata = std::fs::metadata(&canonical)
             .map_err(|_| AppError::new("The folder could not be created."))?;
@@ -108,7 +108,7 @@ impl Vault {
     }
 }
 
-/// Validate a vault-relative path supplied by the front end. Only normal
+/// Validate a repository-relative path supplied by the front end. Only normal
 /// components are accepted; absolute paths, drive prefixes, `.` and `..` are
 /// rejected.
 pub fn normalize_relative(relative: &str) -> AppResult<PathBuf> {
@@ -200,6 +200,26 @@ fn component_eq(a: &Component<'_>, b: &Component<'_>) -> bool {
     }
 }
 
+/// A path for display in the interface. Windows canonical paths carry the
+/// `\\?\` verbatim prefix and UNC form, which mean nothing to a reader.
+pub fn display_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+        return text.into_owned();
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string_lossy().into_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,19 +243,26 @@ mod tests {
     }
 
     #[test]
-    fn vault_stays_inside() {
+    fn repository_stays_inside() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("vault");
+        let root = temp.path().join("Repository");
         std::fs::create_dir(&root).unwrap();
         std::fs::create_dir(temp.path().join("outside")).unwrap();
         std::fs::write(root.join("inside.txt"), "ok").unwrap();
         std::fs::write(temp.path().join("outside/secret.txt"), "no").unwrap();
 
-        let vault = Vault::open(&root).unwrap();
-        assert!(vault.resolve_existing("inside.txt").is_ok());
-        assert!(vault.resolve_existing("../outside/secret.txt").is_err());
-        assert!(vault
+        let repository = Repository::open(&root).unwrap();
+        assert!(repository.resolve_existing("inside.txt").is_ok());
+        assert!(repository.resolve_existing("../outside/secret.txt").is_err());
+        assert!(repository
             .resolve_existing(temp.path().join("outside/secret.txt").to_str().unwrap())
             .is_err());
+    }
+
+    #[test]
+    fn display_path_drops_verbatim_prefix() {
+        let shown = display_path(Path::new(r"\\?\C:\Users\me\Notes"));
+        assert!(!shown.contains(r"\\?\"));
+        assert!(shown.ends_with(r"Notes"));
     }
 }

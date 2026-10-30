@@ -13,7 +13,8 @@ pub struct Settings {
     pub font_family: String,
     pub font_size: u32,
     pub default_sort: String,
-    pub default_vault: Option<String>,
+    #[serde(alias = "defaultVault")]
+    pub default_repository: Option<String>,
     pub tab_width: u32,
     pub pinned_limit: u32,
     pub recent_limit: u32,
@@ -35,7 +36,7 @@ impl Default for Settings {
             font_family: "Consolas".into(),
             font_size: 14,
             default_sort: "name".into(),
-            default_vault: None,
+            default_repository: None,
             tab_width: 4,
             pinned_limit: 5,
             recent_limit: 5,
@@ -54,7 +55,18 @@ impl Default for Settings {
 
 impl Settings {
     pub fn sanitize(mut self) -> Self {
-        if !matches!(self.theme.as_str(), "light" | "dark" | "system") {
+        if !matches!(
+            self.theme.as_str(),
+            "light"
+                | "dark"
+                | "system"
+                | "sepia"
+                | "nord"
+                | "solarized-light"
+                | "solarized-dark"
+                | "midnight"
+                | "forest"
+        ) {
             self.theme = "system".into();
         }
         if !matches!(self.default_sort.as_str(), "name" | "modified" | "size") {

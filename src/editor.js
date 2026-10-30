@@ -84,7 +84,7 @@ export function createEditor({
       },
       {
         // Undo falls through to the rest of the app once the editor's own
-        // history runs out, so vault steps can be undone from here too.
+        // history runs out, so repository steps can be undone from here too.
         key: "Mod-z",
         preventDefault: true,
         run: (view) => (undo(view) ? true : onUndo() || true),

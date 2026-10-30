@@ -4,14 +4,14 @@ use std::sync::Mutex;
 use notify::RecommendedWatcher;
 
 use crate::index::Index;
-use crate::paths::Vault;
+use crate::paths::Repository;
 use crate::settings::{self, Settings};
 use crate::undo::History;
 
 pub struct Inner {
     pub settings: Settings,
     pub settings_notice: Option<String>,
-    pub vault: Option<Vault>,
+    pub repository: Option<Repository>,
     pub index: Option<Index>,
     pub index_notice: Option<String>,
     pub watcher: Option<RecommendedWatcher>,
@@ -32,7 +32,7 @@ impl AppState {
             inner: Mutex::new(Inner {
                 settings: loaded.settings,
                 settings_notice: loaded.notice,
-                vault: None,
+                repository: None,
                 index: None,
                 index_notice: None,
                 watcher: None,
@@ -48,8 +48,8 @@ impl AppState {
         settings::settings_path(&self.config_dir)
     }
 
-    /// Undo copies for the open vault live beside its search index so they
-    /// never appear inside the vault itself.
+    /// Undo copies for the open repository live beside its search index so they
+    /// never appear inside the repository itself.
     pub fn undo_backup_dir(&self, root: &std::path::Path) -> PathBuf {
         crate::index::index_database_path(&self.data_dir, root)
             .with_extension("undo")

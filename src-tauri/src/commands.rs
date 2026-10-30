@@ -9,12 +9,12 @@ use tauri::async_runtime::spawn_blocking;
 use crate::desktop::{self, DesktopShortcutStatus};
 use crate::encoding::should_index_size;
 use crate::index::{index_database_path, Index, SearchHit, TagCount};
-use crate::paths::Vault;
+use crate::paths::Repository;
 use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::tree::{self, SortOrder, TreeNode};
 use crate::undo::{self, UndoAction, UndoState};
-use crate::vault::{
+use crate::repository::{
     self, CreatedItem, FileRead, SaveOutcome,
 };
 use crate::watcher;
@@ -24,7 +24,7 @@ const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(7 * 24 *
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VaultInfo {
+pub struct RepositoryInfo {
     pub path: String,
     pub name: String,
 }
@@ -34,7 +34,7 @@ pub struct VaultInfo {
 pub struct Snapshot {
     pub version: String,
     pub settings: Settings,
-    pub vault: Option<VaultInfo>,
+    pub repository: Option<RepositoryInfo>,
     pub tree: Vec<TreeNode>,
     pub notices: Vec<String>,
 }
@@ -49,16 +49,16 @@ pub struct Organization {
 }
 
 #[tauri::command]
-pub fn bootstrap(
+pub async fn bootstrap(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<Snapshot, String> {
-    let (settings_notice, default_vault) = {
+    let (settings_notice, default_repository) = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
-        (inner.settings_notice.take(), inner.settings.default_vault.clone())
+        (inner.settings_notice.take(), inner.settings.default_repository.clone())
     };
 
     let mut notices = Vec::new();
@@ -66,9 +66,12 @@ pub fn bootstrap(
         notices.push(notice);
     }
 
-    if let Some(path) = default_vault {
+    if let Some(path) = default_repository {
         let arc: Arc<AppState> = (*state).clone();
-        match open_vault_impl(&arc, &app, PathBuf::from(path)) {
+        let opened = spawn_blocking(move || open_repository_impl(&arc, &app, PathBuf::from(path)))
+            .await
+            .map_err(|_| "The operation could not be completed.".to_string())?;
+        match opened {
             Ok(mut snapshot) => {
                 let mut combined = notices;
                 combined.append(&mut snapshot.notices);
@@ -76,7 +79,7 @@ pub fn bootstrap(
                 return Ok(snapshot);
             }
             Err(_) => notices.push(
-                "The default vault folder could not be opened. Choose a folder to begin."
+                "The default repository folder could not be opened. Choose a folder to begin."
                     .to_string(),
             ),
         }
@@ -89,36 +92,36 @@ pub fn bootstrap(
     Ok(Snapshot {
         version: env!("CARGO_PKG_VERSION").to_string(),
         settings: inner.settings.clone(),
-        vault: None,
+        repository: None,
         tree: Vec::new(),
         notices,
     })
 }
 
 #[tauri::command]
-pub async fn open_vault(
+pub async fn open_repository(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
     path: String,
 ) -> Result<Snapshot, String> {
     let arc: Arc<AppState> = (*state).clone();
-    spawn_blocking(move || open_vault_impl(&arc, &app, PathBuf::from(path)))
+    spawn_blocking(move || open_repository_impl(&arc, &app, PathBuf::from(path)))
         .await
         .map_err(|_| "The operation could not be completed.".to_string())?
 }
 
-fn open_vault_impl(
+fn open_repository_impl(
     state: &Arc<AppState>,
     app: &AppHandle,
     path: PathBuf,
 ) -> Result<Snapshot, String> {
-    let vault = Vault::open(&path).map_err(|error| error.to_string())?;
+    let repository = Repository::open(&path).map_err(|error| error.to_string())?;
     let mut notices = Vec::new();
 
-    let database = index_database_path(&state.data_dir, vault.root());
+    let database = index_database_path(&state.data_dir, repository.root());
     let mut index_notice = None;
-    let index = match Index::open(&database, vault.root()) {
-        Ok(mut index) => match tree::rescan_index(&mut index, &vault) {
+    let index = match Index::open(&database, repository.root()) {
+        Ok(mut index) => match tree::rescan_index(&mut index, &repository) {
             Ok(_) => Some(index),
             Err(error) => {
                 index_notice = Some(error.clone());
@@ -133,7 +136,7 @@ fn open_vault_impl(
         }
     };
 
-    let watcher = match watcher::start(app.clone(), Arc::clone(state), vault.clone()) {
+    let watcher = match watcher::start(app.clone(), Arc::clone(state), repository.clone()) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
             notices.push(format!(
@@ -151,26 +154,26 @@ fn open_vault_impl(
     inner.watcher = None;
     inner.watcher = watcher;
     inner.index_notice = index_notice;
-    inner.vault = Some(vault.clone());
+    inner.repository = Some(repository.clone());
     inner.index = index;
     inner.undo.reset();
-    let backup = state.undo_backup_dir(vault.root());
+    let backup = state.undo_backup_dir(repository.root());
     undo::prune(&backup, UNDO_WINDOW);
     inner.undo_backup_dir = Some(backup);
 
     let sort = SortOrder::parse(&inner.settings.default_sort);
-    let tree = tree::build_tree(&vault, sort, inner.index.as_ref());
+    let tree = tree::build_tree(&repository, sort, inner.index.as_ref());
 
     Ok(Snapshot {
         version: env!("CARGO_PKG_VERSION").to_string(),
         settings: inner.settings.clone(),
-        vault: Some(VaultInfo {
-            path: vault.root().to_string_lossy().to_string(),
-            name: vault
+        repository: Some(RepositoryInfo {
+            path: crate::paths::display_path(repository.root()),
+            name: repository
                 .root()
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Vault".to_string()),
+                .unwrap_or_else(|| "repository".to_string()),
         }),
         tree,
         notices,
@@ -190,11 +193,11 @@ fn list_tree_impl(state: &Arc<AppState>) -> Result<Vec<TreeNode>, String> {
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let Some(vault) = inner.vault.as_ref() else {
+    let Some(repository) = inner.repository.as_ref() else {
         return Ok(Vec::new());
     };
     Ok(tree::build_tree(
-        vault,
+        repository,
         SortOrder::parse(&inner.settings.default_sort),
         inner.index.as_ref(),
     ))
@@ -216,11 +219,11 @@ fn read_file_impl(state: &Arc<AppState>, path: &str) -> Result<FileRead, String>
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
-    let file = vault::read_file(vault, path).map_err(|error| error.to_string())?;
+        .ok_or_else(|| "Open a repository first.".to_string())?;
+    let file = repository::read_file(repository, path).map_err(|error| error.to_string())?;
     if let Some(index) = inner.index.as_mut() {
         let _ = index.record_recent(path);
     }
@@ -237,11 +240,11 @@ pub fn open_external(
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
-        let vault = inner
-            .vault
+        let repository = inner
+            .repository
             .as_ref()
-            .ok_or_else(|| "Open a vault first.".to_string())?;
-        vault
+            .ok_or_else(|| "Open a repository first.".to_string())?;
+        repository
             .resolve_existing(&path)
             .map_err(|error| error.to_string())?
     };
@@ -273,14 +276,14 @@ fn list_revisions_impl(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
-    vault
+        .ok_or_else(|| "Open a repository first.".to_string())?;
+    repository
         .resolve_existing(path)
         .map_err(|error| error.to_string())?;
-    crate::revisions::list(vault, path)
+    crate::revisions::list(repository, path)
 }
 
 #[tauri::command]
@@ -300,19 +303,19 @@ fn restore_revision_impl(
     path: &str,
     id: &str,
 ) -> Result<(), String> {
-    let (vault, retention) = {
+    let (repository, retention) = {
         let inner = state
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
-        let vault = inner
-            .vault
+        let repository = inner
+            .repository
             .as_ref()
-            .ok_or_else(|| "Open a vault first.".to_string())?
+            .ok_or_else(|| "Open a repository first.".to_string())?
             .clone();
-        (vault, inner.settings.retention())
+        (repository, inner.settings.retention())
     };
-    crate::revisions::restore(&vault, path, id, &retention)
+    crate::revisions::restore(&repository, path, id, &retention)
 }
 
 #[tauri::command]
@@ -340,10 +343,10 @@ fn save_file_impl(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
     // Consecutive saves of one file collapse into a single step, so Undo
     // goes back to the text the file had before the editing session.
@@ -356,8 +359,8 @@ fn save_file_impl(
             } if last == path => Some(content.clone()),
             _ => None,
         });
-    let outcome = vault::save_file_with_revisions(
-        &vault,
+    let outcome = repository::save_file_with_revisions(
+        &repository,
         path,
         content,
         encoding,
@@ -370,7 +373,7 @@ fn save_file_impl(
             inner.undo.pop_undo();
             text
         }
-        _ => vault::read_text(&vault, path).unwrap_or_default(),
+        _ => repository::read_text(&repository, path).unwrap_or_default(),
     };
     inner.undo.push(
         format!("editing {}", basename(path)),
@@ -418,23 +421,23 @@ fn create_item_impl(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
-    let created = vault::create_item(&vault, parent, name, is_dir)
+    let created = repository::create_item(&repository, parent, name, is_dir)
         .map_err(|error| error.to_string())?;
     if !created.is_dir {
         if let Some(index) = inner.index.as_mut() {
             let leaf = created.path.rsplit('/').next().unwrap_or(&created.path).to_string();
-            let absolute = vault.root().join(&created.path);
+            let absolute = repository.root().join(&created.path);
             let metadata = std::fs::metadata(&absolute).ok();
             let size = metadata.as_ref().map(|meta| meta.len() as i64).unwrap_or(0);
             let mtime = metadata
                 .as_ref()
                 .and_then(|meta| meta.modified().ok())
-                .map(crate::vault::system_ms)
+                .map(crate::repository::system_ms)
                 .unwrap_or(0);
             let _ = index.upsert_file(&created.path, &leaf, size, mtime, Some(""));
         }
@@ -470,15 +473,15 @@ fn move_item_impl(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
-    let new_path = vault::move_item(&vault, source, target_parent)
+    let new_path = repository::move_item(&repository, source, target_parent)
         .map_err(|error| error.to_string())?;
     if new_path != source {
-        if let Err(error) = crate::revisions::move_path(&vault, source, &new_path) {
+        if let Err(error) = crate::revisions::move_path(&repository, source, &new_path) {
             crate::log::line("warn", &format!("revision move failed: {error}"));
         }
         if let Some(index) = inner.index.as_mut() {
@@ -513,21 +516,21 @@ fn delete_item_impl(state: &Arc<AppState>, path: &str) -> Result<(), String> {
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
-    let absolute = vault
+    let absolute = repository
         .resolve_existing(path)
         .map_err(|error| error.to_string())?;
-    // A copy is kept outside the vault so the deletion can be reversed, then
+    // A copy is kept outside the repository so the deletion can be reversed, then
     // the original goes to the system trash as before.
     let entry = inner
         .undo_backup_dir
         .clone()
         .and_then(|backup| undo::capture(&backup, path, &absolute).ok());
-    if let Err(error) = vault::delete_item(&vault, path) {
+    if let Err(error) = repository::delete_item(&repository, path) {
         if let Some(entry) = entry.as_ref() {
             let _ = std::fs::remove_dir_all(&entry.backup);
             let _ = std::fs::remove_file(&entry.backup);
@@ -542,7 +545,7 @@ fn delete_item_impl(state: &Arc<AppState>, path: &str) -> Result<(), String> {
             },
         );
     }
-    if let Err(error) = crate::revisions::remove_path(&vault, path) {
+    if let Err(error) = crate::revisions::remove_path(&repository, path) {
         crate::log::line("warn", &format!("revision delete failed: {error}"));
     }
     if let Some(index) = inner.index.as_mut() {
@@ -575,7 +578,7 @@ fn search_impl(state: &Arc<AppState>, query: &str) -> Result<Vec<SearchHit>, Str
         inner
             .index_notice
             .clone()
-            .unwrap_or_else(|| "Search is unavailable for this vault.".to_string())
+            .unwrap_or_else(|| "Search is unavailable for this repository.".to_string())
     })?;
     index.search(query, 200)
 }
@@ -593,18 +596,18 @@ fn rescan_impl(state: &Arc<AppState>) -> Result<usize, String> {
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
     if inner.index.is_none() {
-        let database = index_database_path(&state.data_dir, vault.root());
-        inner.index = Some(Index::open(&database, vault.root())?);
+        let database = index_database_path(&state.data_dir, repository.root());
+        inner.index = Some(Index::open(&database, repository.root())?);
         inner.index_notice = None;
     }
     let index = inner.index.as_mut().expect("index was opened");
-    tree::rescan_index(index, &vault)
+    tree::rescan_index(index, &repository)
 }
 
 #[tauri::command]
@@ -657,11 +660,11 @@ pub fn set_tags(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
-    vault
+        .ok_or_else(|| "Open a repository first.".to_string())?;
+    repository
         .resolve_existing(&path)
         .map_err(|error| error.to_string())?;
     let index = inner
@@ -682,11 +685,11 @@ pub fn set_pin(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
-    vault
+        .ok_or_else(|| "Open a repository first.".to_string())?;
+    repository
         .resolve_existing(&path)
         .map_err(|error| error.to_string())?;
     let index = inner
@@ -706,12 +709,12 @@ pub fn set_sort_order(
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?;
+        .ok_or_else(|| "Open a repository first.".to_string())?;
     if !parent.is_empty() {
-        vault
+        repository
             .resolve_dir(&parent)
             .map_err(|error| error.to_string())?;
     }
@@ -785,10 +788,10 @@ fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let vault = inner
-        .vault
+    let repository = inner
+        .repository
         .as_ref()
-        .ok_or_else(|| "Open a vault first.".to_string())?
+        .ok_or_else(|| "Open a repository first.".to_string())?
         .clone();
     let popped = if reverse {
         inner.undo.pop_undo()
@@ -803,7 +806,7 @@ fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
         }
     })?;
 
-    let outcome = perform(&vault, inner.undo_backup_dir.as_deref(), &action, reverse);
+    let outcome = perform(&repository, inner.undo_backup_dir.as_deref(), &action, reverse);
     match outcome {
         Ok((inverse, message)) => {
             // A restored deletion cannot be repeated, so it leaves no redo
@@ -817,7 +820,7 @@ fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
                 inner.undo.push_undo(label, inverse);
             }
             if let Some(index) = inner.index.as_mut() {
-                let _ = refresh_index(index, &vault, &action, reverse);
+                let _ = refresh_index(index, &repository, &action, reverse);
             }
             Ok(message)
         }
@@ -836,15 +839,15 @@ fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
 /// Apply one end of a recorded step. Returns the step that reverses it and a
 /// short status message.
 fn perform(
-    vault: &Vault,
+    repository: &Repository,
     backup_root: Option<&Path>,
     action: &UndoAction,
     reverse: bool,
 ) -> Result<(UndoAction, String), String> {
     match action {
         UndoAction::Save { path, content } => {
-            let current = vault::read_text(vault, path).map_err(|error| error.to_string())?;
-            let absolute = vault
+            let current = repository::read_text(repository, path).map_err(|error| error.to_string())?;
+            let absolute = repository
                 .resolve_for_write(path)
                 .map_err(|error| error.to_string())?;
             let bytes = std::fs::read(&absolute)
@@ -873,12 +876,12 @@ fn perform(
             } else {
                 (from.as_str(), to.as_str())
             };
-            if let Err(error) = crate::revisions::remove_path(vault, destination) {
+            if let Err(error) = crate::revisions::remove_path(repository, destination) {
                 crate::log::line("warn", &format!("stale revision path: {error}"));
             }
-            let moved = vault::move_item(vault, source, &parent_of(destination))
+            let moved = repository::move_item(repository, source, &parent_of(destination))
                 .map_err(|error| error.to_string())?;
-            if let Err(error) = crate::revisions::move_path(vault, source, &moved) {
+            if let Err(error) = crate::revisions::move_path(repository, source, &moved) {
                 crate::log::line("warn", &format!("revision move failed: {error}"));
             }
             let moved_action = if reverse {
@@ -896,7 +899,7 @@ fn perform(
         }
         UndoAction::Create { path, is_dir } => {
             if reverse {
-                let absolute = vault
+                let absolute = repository
                     .resolve_existing(path)
                     .map_err(|error| error.to_string())?;
                 let metadata = std::fs::symlink_metadata(&absolute)
@@ -924,8 +927,8 @@ fn perform(
                     format!("Removed {path}."),
                 ))
             } else {
-                let created = vault::create_item(
-                    vault,
+                let created = repository::create_item(
+                    repository,
                     &parent_of(path),
                     basename(path),
                     *is_dir,
@@ -944,7 +947,7 @@ fn perform(
             if reverse {
                 let mut restored = Vec::with_capacity(entries.len());
                 for entry in entries {
-                    let path = undo::restore(vault, entry).map_err(|error| error.to_string())?;
+                    let path = undo::restore(repository, entry).map_err(|error| error.to_string())?;
                     restored.push(undo::TrashedEntry {
                         path,
                         ..entry.clone()
@@ -965,13 +968,13 @@ fn perform(
 
 fn refresh_index(
     index: &mut Index,
-    vault: &Vault,
+    repository: &Repository,
     action: &UndoAction,
     _reverse: bool,
 ) -> Result<(), String> {
     match action {
         UndoAction::Save { path, .. } => {
-            if let Ok(text) = vault::read_text(vault, path) {
+            if let Ok(text) = repository::read_text(repository, path) {
                 let name = basename(path).to_string();
                 let size = text.len() as i64;
                 index.upsert_file(path, &name, size, 0, Some(&text))?;
@@ -1004,15 +1007,15 @@ pub fn save_settings(
     settings: Settings,
 ) -> Result<Settings, String> {
     let mut settings = settings.sanitize();
-    if let Some(default_vault) = settings.default_vault.clone() {
-        let path = PathBuf::from(default_vault);
-        match Vault::open(&path) {
-            Ok(vault) => {
-                settings.default_vault =
-                    Some(vault.root().to_string_lossy().to_string());
+    if let Some(default_repository) = settings.default_repository.clone() {
+        let path = PathBuf::from(default_repository);
+        match Repository::open(&path) {
+            Ok(repository) => {
+                settings.default_repository =
+                    Some(repository.root().to_string_lossy().to_string());
             }
             Err(_) => {
-                return Err("The default vault folder could not be opened.".to_string());
+                return Err("The default repository folder could not be opened.".to_string());
             }
         }
     }

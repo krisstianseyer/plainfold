@@ -8,6 +8,7 @@ import {
   basename,
   contentChangedSince,
   countFiles,
+  countFolders,
   filterTree,
   filterTreeByQuery,
   findNode,
@@ -21,7 +22,7 @@ import {
 const $ = (id) => document.getElementById(id);
 
 const els = {
-  openVault: $("open-vault"),
+  openRepository: $("open-repository"),
   emptyOpen: $("empty-open"),
   emptyState: $("empty-state"),
   emptyTitle: document.querySelector("#empty-state h1"),
@@ -42,18 +43,28 @@ const els = {
   sortAlpha: $("sort-alpha"),
   newFile: $("new-file"),
   newFolder: $("new-folder"),
-  vaultName: $("vault-name"),
+  repositoryLabel: $("repository-label"),
+  brandButton: $("brand-button"),
+  brandPopover: $("brand-popover"),
+  repoLink: $("repo-link"),
+  windowMinimize: $("window-minimize"),
+  windowMaximize: $("window-maximize"),
+  windowClose: $("window-close"),
+  statusMessage: $("status-message"),
   layout: document.querySelector(".layout"),
   paneResizer: $("pane-resizer"),
   workspace: document.querySelector(".workspace"),
   sidebar: document.querySelector(".sidebar"),
   editorPane: $("editor-pane"),
   fileName: $("file-name"),
-  filePath: $("file-path"),
-  fileMeta: $("file-meta"),
+  filePathTip: $("file-path-tip"),
   fileTags: $("file-tags"),
   wrapToggle: $("wrap-toggle"),
   saveButton: $("save-button"),
+  closeFile: $("close-file"),
+  repoLoading: $("repo-loading"),
+  repoLoadingTitle: $("repo-loading-title"),
+  repoLoadingCopy: $("repo-loading-copy"),
   editor: $("editor"),
   notice: $("notice"),
   noticeText: $("notice-text"),
@@ -66,6 +77,14 @@ const els = {
   resultsEmpty: $("results-empty"),
   closeResults: $("close-results"),
   contextMenu: $("context-menu"),
+  limitDialog: $("limit-dialog"),
+  limitForm: $("limit-form"),
+  limitTitle: $("limit-title"),
+  limitCopy: $("limit-copy"),
+  limitInput: $("limit-input"),
+  limitError: $("limit-error"),
+  limitSubmit: $("limit-submit"),
+  limitCancel: $("limit-cancel"),
   promptDialog: $("prompt-dialog"),
   promptForm: $("prompt-form"),
   promptTitle: $("prompt-title"),
@@ -88,14 +107,16 @@ const els = {
   revisionsList: $("revisions-list"),
   revisionsEmpty: $("revisions-empty"),
   revisionsClose: $("revisions-close"),
+  propertiesDialog: $("properties-dialog"),
+  propertiesList: $("properties-list"),
   settingsDialog: $("settings-dialog"),
   settingsForm: $("settings-form"),
   settingTheme: $("setting-theme"),
   settingFontFamily: $("setting-font-family"),
   settingFontSize: $("setting-font-size"),
   settingTabWidth: $("setting-tab-width"),
-  settingPinnedLimit: $("setting-pinned-limit"),
-  settingRecentLimit: $("setting-recent-limit"),
+  pinnedTitle: $("pinned-title"),
+  recentTitle: $("recent-title"),
   settingAutosaveMode: $("setting-autosave-mode"),
   settingAutosaveIdle: $("setting-autosave-idle"),
   settingAutosaveInterval: $("setting-autosave-interval"),
@@ -105,10 +126,10 @@ const els = {
   settingRevisionMonthly: $("setting-revision-monthly"),
   settingRevisionYearly: $("setting-revision-yearly"),
   settingSort: $("setting-sort"),
-  settingDefaultVault: $("setting-default-vault"),
-  chooseDefaultVault: $("choose-default-vault"),
-  useCurrentVault: $("use-current-vault"),
-  clearDefaultVault: $("clear-default-vault"),
+  settingDefaultRepository: $("setting-default-repository"),
+  chooseDefaultRepository: $("choose-default-repository"),
+  useCurrentRepository: $("use-current-repository"),
+  clearDefaultRepository: $("clear-default-repository"),
   settingsError: $("settings-error"),
   settingsCancel: $("settings-cancel"),
 };
@@ -128,7 +149,7 @@ const DEFAULT_SETTINGS = {
   fontFamily: "Consolas",
   fontSize: 14,
   defaultSort: "name",
-  defaultVault: null,
+  defaultRepository: null,
   tabWidth: 4,
   pinnedLimit: 5,
   recentLimit: 5,
@@ -145,7 +166,10 @@ const DEFAULT_SETTINGS = {
 
 const state = {
   settings: { ...DEFAULT_SETTINGS },
-  vault: null,
+  // Last settings known to be written to disk, used by small popups that save
+  // one value without going through the Settings dialog.
+  savedSettings: { ...DEFAULT_SETTINGS },
+  repository: null,
   tree: [],
   expanded: new Set(),
   selected: null,
@@ -162,7 +186,7 @@ const state = {
   searchTimer: null,
   searchSequence: 0,
   dragSource: null,
-  settingsDraftVault: null,
+  settingsDraftRepository: null,
   dark: false,
   saving: false,
   moving: false,
@@ -175,6 +199,7 @@ const state = {
   zoom: null,
   // Text of the open file on disk, restored when an edit is undone.
   diskContent: null,
+  statusTimer: null,
   undoInfo: { undoLabel: null, redoLabel: null },
   undoBusy: false,
 };
@@ -190,14 +215,77 @@ function errText(error) {
   return "The operation could not be completed.";
 }
 
+/** Errors flash in the centre of the status bar, then clear. */
 function setStatus(text) {
-  els.statusLeft.textContent = text;
+  els.statusMessage.textContent = text ?? "";
+  els.statusMessage.hidden = !text;
+  clearTimeout(state.statusTimer);
+  state.statusTimer = setTimeout(() => {
+    els.statusMessage.hidden = true;
+  }, 4000);
 }
 
-function updateStatusRight() {
-  els.statusRight.textContent = state.vault
-    ? `${state.vault.path} · ${countFiles(state.tree)} file${countFiles(state.tree) === 1 ? "" : "s"}`
-    : "";
+/**
+ * Repository loading can take a moment on large folders, so a popup covers
+ * the workspace while the backend scans. The browser only paints when the
+ * main thread is idle, hence the yield before each backend call below.
+ */
+function showRepositoryLoading(label, copy = "") {
+  els.repoLoadingTitle.textContent = label;
+  els.repoLoadingCopy.textContent = copy;
+  els.repoLoadingCopy.hidden = !copy;
+  els.repoLoading.hidden = false;
+  document.body.classList.add("repository-loading");
+}
+
+function hideRepositoryLoading() {
+  els.repoLoading.hidden = true;
+  document.body.classList.remove("repository-loading");
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+/** Folders and files in the whole repository, shown at the bottom left. */
+function updateStatusLeft() {
+  if (!state.repository) {
+    els.statusLeft.textContent = "";
+    return;
+  }
+  const folders = countFolders(state.tree);
+  const files = countFiles(state.tree);
+  els.statusLeft.textContent = `${formatCount(folders)} folder${folders === 1 ? "" : "s"} · ${formatCount(files)} file${files === 1 ? "" : "s"}`;
+}
+
+/** Words, characters, and size of the open file, shown at the bottom right. */
+function updateFileStats(content, size) {
+  els.statusRight.textContent = statsText(content, size);
+}
+
+function countWords(text) {
+  // Same rule as the word count most editors use: runs of non-whitespace.
+  let count = 0;
+  const re = /\S+/g;
+  while (re.exec(text)) count += 1;
+  return count;
+}
+
+function formatCount(value) {
+  return value.toLocaleString();
+}
+
+function statsText(content, size) {
+  const file = state.currentFile;
+  if (!file) return "";
+  const text = content ?? "";
+  const words = countWords(text);
+  const chars = text.replace(/\s/g, "").length;
+  return [
+    `${formatCount(words)} word${words === 1 ? "" : "s"}`,
+    `${formatCount(chars)} char${chars === 1 ? "" : "s"}`,
+    formatBytes(size ?? file.size ?? 0),
+  ].join(" · ");
 }
 
 function setNotice(text, kind = "info") {
@@ -221,7 +309,7 @@ function dismissNotice() {
 function updateTitle() {
   if (state.currentFile) {
     const marker = state.dirty ? "• " : "";
-    document.title = `${marker}${basename(state.currentFile.path)} — Plainfold`;
+    document.title = `${state.currentFile.name} — Plainfold`;
   } else {
     document.title = "Plainfold";
   }
@@ -235,11 +323,29 @@ function fontValue(raw) {
   return `"${value.replaceAll('"', "")}"`;
 }
 
-function applyTheme() {
+/** Every theme the settings list offers. Only `system` follows the OS. */
+const THEMES = {
+  light: { dark: false },
+  dark: { dark: true },
+  sepia: { dark: false },
+  nord: { dark: true },
+  "solarized-light": { dark: false },
+  "solarized-dark": { dark: true },
+  midnight: { dark: true },
+  forest: { dark: true },
+};
+
+function themeName() {
   const setting = state.settings.theme ?? "system";
-  const dark = setting === "dark" || (setting === "system" && media.matches);
+  if (setting === "system") return media.matches ? "dark" : "light";
+  return THEMES[setting] ? setting : media.matches ? "dark" : "light";
+}
+
+function applyTheme() {
+  const theme = themeName();
+  const dark = THEMES[theme]?.dark ?? false;
   state.dark = dark;
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  document.documentElement.dataset.theme = theme;
   document.documentElement.style.setProperty(
     "--editor-font",
     `${fontValue(state.settings.fontFamily)}, "DejaVu Sans Mono", monospace`
@@ -358,38 +464,39 @@ function saveSidebarWidth() {
 }
 
 function updateControls() {
-  const hasVault = Boolean(state.vault);
+  const hasRepository = Boolean(state.repository);
   const hasFile = Boolean(state.currentFile);
-  els.search.disabled = !hasVault;
-  els.rescan.disabled = !hasVault;
+  els.search.disabled = !hasRepository;
+  els.rescan.disabled = !hasRepository;
   const undoLabel = state.undoInfo.undoLabel;
-  els.undoButton.disabled = !hasVault || state.undoBusy;
+  els.undoButton.disabled = !hasRepository || state.undoBusy;
   els.undoButton.title = undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : "Nothing to undo";
   const redoLabel = state.undoInfo.redoLabel;
-  els.redoButton.disabled = !hasVault || state.undoBusy;
+  els.redoButton.disabled = !hasRepository || state.undoBusy;
   els.redoButton.title = redoLabel ? `Redo ${redoLabel} (Ctrl+Y)` : "Nothing to redo";
-  els.treeFilter.disabled = !hasVault;
-  els.sortAlpha.disabled = !hasVault;
-  els.newFile.disabled = !hasVault;
-  els.newFolder.disabled = !hasVault;
+  els.treeFilter.disabled = !hasRepository;
+  els.sortAlpha.disabled = !hasRepository;
+  els.newFile.disabled = !hasRepository;
+  els.newFolder.disabled = !hasRepository;
   els.wrapToggle.disabled = !hasFile;
   els.saveButton.disabled = !hasFile || state.currentFile?.readOnly || !state.dirty;
   els.saveButton.title = state.currentFile?.readOnly ? "This file is read-only" : "Save (Ctrl+S)";
+  els.closeFile.hidden = !hasFile;
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   els.tree.classList.toggle("filtered", filtered);
-  if (!hasVault) {
+  if (!hasRepository) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
     els.emptyTitle.textContent = "Plain text, plain files.";
     els.emptyCopy.textContent =
-      "Open a folder as your vault. Every note stays a real file on disk, in the encoding and line endings it already uses.";
+      "Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.";
     els.emptyOpen.textContent = "Open a folder";
   } else if (!hasFile) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
     els.emptyTitle.textContent = "Choose a file.";
     els.emptyCopy.textContent =
-      "Select a file in the vault, or create one. Files are opened as plain text, never rendered.";
+      "Select a file in the repository, or create one. Files are opened as plain text, never rendered.";
     els.emptyOpen.textContent = "New file";
   }
 }
@@ -401,37 +508,55 @@ function handleNotices(notices) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Vault and tree                                                      */
+/* Repository and tree                                                 */
 /* ------------------------------------------------------------------ */
 
-async function chooseVault() {
-  if (!(await resolvePendingChanges())) return;
+async function chooseRepository() {
+  try {
+    if (!(await resolvePendingChanges())) return;
+  } catch (error) {
+    setStatus(errText(error));
+    setNotice(errText(error), "warn");
+    return;
+  }
   let selected;
   try {
     selected = await openDialog({
       directory: true,
       multiple: false,
-      title: "Open a vault folder",
+      title: "Open a repository folder",
     });
   } catch (error) {
     setStatus(errText(error));
+    setNotice(errText(error), "warn");
     return;
   }
   if (!selected) return;
-  await activateVault(selected);
+  await activateRepository(selected);
 }
 
-async function activateVault(path) {
+async function activateRepository(path) {
   try {
-    setStatus("Opening vault…");
-    const snapshot = await api.openVault(path);
+    setStatus("Opening repository…");
+    showRepositoryLoading(`Opening ${repositoryName(path)}`, "Reading the folder and its files.");
+    await nextFrame();
+    const snapshot = await api.openRepository(path);
     applySnapshot(snapshot);
     await refreshOrganization();
     handleNotices(snapshot.notices);
-    setStatus(state.vault ? `Opened ${state.vault.name}.` : "Ready");
+    setStatus(state.repository ? `Opened ${state.repository.name}.` : "Ready");
   } catch (error) {
     setStatus(errText(error));
+    setNotice(errText(error), "warn");
+  } finally {
+    hideRepositoryLoading();
   }
+}
+
+/** Last path segment of a folder, for the loading popup title. */
+function repositoryName(path) {
+  const parts = String(path ?? "").split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? String(path ?? "");
 }
 
 function applySnapshot(snapshot) {
@@ -440,8 +565,9 @@ function applySnapshot(snapshot) {
   els.treeFilter.value = "";
   hideResults();
   state.settings = { ...DEFAULT_SETTINGS, ...snapshot.settings };
+  state.savedSettings = { ...state.settings };
   els.appVersion.textContent = snapshot.version ? `v${snapshot.version}` : "";
-  state.vault = snapshot.vault;
+  state.repository = snapshot.repository;
   state.tree = snapshot.tree ?? [];
   state.expanded = new Set();
   state.selected = null;
@@ -454,18 +580,20 @@ function applySnapshot(snapshot) {
   state.undoInfo = { undoLabel: null, redoLabel: null };
   refreshUndoState();
   applyTheme();
-  els.vaultName.textContent = state.vault ? state.vault.path : "No vault open";
-  els.vaultName.title = state.vault ? state.vault.path : "";
+  els.repositoryLabel.textContent = state.repository ? state.repository.name : "Repository";
+  const repositoryPath = state.repository ? state.repository.path : "";
+  els.repositoryLabel.title = repositoryPath;
+  els.repositoryLabel.style.cursor = repositoryPath ? "help" : "";
   renderTree();
   renderShortLists();
   renderTagFilter();
   updateControls();
-  updateStatusRight();
+  updateStatusLeft();
   updateTitle();
 }
 
 async function loadTree() {
-  if (!state.vault) {
+  if (!state.repository) {
     state.tree = [];
     renderTree();
     return;
@@ -476,7 +604,7 @@ async function loadTree() {
       state.selected = null;
     }
     renderTree();
-    updateStatusRight();
+    updateStatusLeft();
     updateControls();
   } catch (error) {
     setStatus(errText(error));
@@ -485,7 +613,7 @@ async function loadTree() {
 }
 
 async function refreshOrganization() {
-  if (!state.vault) {
+  if (!state.repository) {
     state.tags = new Map();
     state.tagCounts = [];
     state.pins = [];
@@ -518,6 +646,8 @@ async function refreshOrganization() {
 function renderShortLists() {
   const pinnedLimit = state.settings.pinnedLimit ?? 5;
   const recentLimit = state.settings.recentLimit ?? 5;
+  els.pinnedTitle.title = `Pinned (showing up to ${pinnedLimit}) — click to change how many are shown`;
+  els.recentTitle.title = `Recent (showing up to ${recentLimit}) — click to change how many are shown`;
   renderShortList(els.pinnedList, state.pins.slice(0, pinnedLimit), "Nothing pinned.", "pinned");
   renderShortList(
     els.recentList,
@@ -630,7 +760,7 @@ function renderTree() {
     state.pendingTreeFocus = activeEntry.dataset.path;
   }
   els.tree.textContent = "";
-  if (!state.vault) {
+  if (!state.repository) {
     els.treeEmpty.hidden = true;
     return;
   }
@@ -641,7 +771,7 @@ function renderTree() {
     ? "No files carry this tag."
     : state.fileFilter
       ? "No items match this filter."
-      : "This vault is empty.";
+      : "This repository is empty.";
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   renderNodes(display, 0, filtered);
   const entries = [...els.tree.querySelectorAll(".tree-entry")];
@@ -1024,7 +1154,7 @@ function showContextMenu(x, y, node, source = null) {
     add("New folder…", () => createItem(node.path, true));
     add("Sort alphabetically", () => sortAlphabetically(node.path));
     if (node.path.includes("/")) {
-      add("Move to vault root", () => movePath(node.path, ""));
+      add("Move to repository root", () => movePath(node.path, ""));
     }
     const siblings = siblingNodes(node);
     const index = siblings.findIndex((sibling) => sibling.path === node.path);
@@ -1035,6 +1165,7 @@ function showContextMenu(x, y, node, source = null) {
     add("Delete folder…", () => deleteItem(node), true);
   } else {
     add("Open", () => openFile(node.path));
+    add("Properties…", () => showProperties(node.path));
     add("Show revisions…", () => showRevisions(node.path));
     const pinned = state.pins.includes(node.path);
     if (source === "pinned") {
@@ -1046,12 +1177,12 @@ function showContextMenu(x, y, node, source = null) {
       add("Remove from Recent", () => removeRecent(node.path));
     }
     if (source) {
-      add("Reveal in vault", () => revealInTree(node.path));
+      add("Reveal in repository", () => revealInTree(node.path));
     }
     add("Edit tags…", () => editTags(node.path));
     add("Sort alphabetically", () => sortAlphabetically(parentOf(node.path)));
     if (node.path.includes("/")) {
-      add("Move to vault root", () => movePath(node.path, ""));
+      add("Move to repository root", () => movePath(node.path, ""));
     }
     const siblings = siblingNodes(node);
     const index = siblings.findIndex((sibling) => sibling.path === node.path);
@@ -1071,6 +1202,56 @@ function showContextMenu(x, y, node, source = null) {
   els.contextMenu.querySelector("button")?.focus();
 }
 
+function showFileContextMenu(x, y) {
+  els.contextMenu.textContent = "";
+  state.menuReturnFocus = document.activeElement;
+  const add = (label, action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.textContent = label;
+    button.addEventListener("click", async () => {
+      hideContextMenu();
+      await action();
+    });
+    els.contextMenu.append(button);
+  };
+  const path = state.currentFile.path;
+  add("Properties…", () => showProperties(path));
+  add("Show revisions…", () => showRevisions(path));
+  add("Copy full path", () => copyText(state.repository ? `${state.repository.path}\\${path.replaceAll("/", "\\")}` : path));
+  els.contextMenu.hidden = false;
+  const rect = els.contextMenu.getBoundingClientRect();
+  const left = Math.min(x, window.innerWidth - rect.width - 8);
+  const top = Math.min(y, window.innerHeight - rect.height - 8);
+  els.contextMenu.style.left = `${Math.max(8, left)}px`;
+  els.contextMenu.style.top = `${Math.max(8, top)}px`;
+  els.contextMenu.querySelector("button")?.focus();
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Path copied.");
+  } catch {
+    setStatus("The path could not be copied.");
+  }
+}
+
+function toggleBrandPopover() {
+  if (els.brandPopover.hidden) {
+    els.brandPopover.hidden = false;
+    els.brandButton.setAttribute("aria-expanded", "true");
+  } else {
+    hideBrandPopover();
+  }
+}
+
+function hideBrandPopover() {
+  els.brandPopover.hidden = true;
+  els.brandButton.setAttribute("aria-expanded", "false");
+}
+
 function hideContextMenu() {
   els.contextMenu.hidden = true;
   els.contextMenu.textContent = "";
@@ -1087,7 +1268,7 @@ function targetFolder() {
 }
 
 async function createItem(parent, isDir) {
-  if (!state.vault) return;
+  if (!state.repository) return;
   ensureExpanded(parent);
   renderTree();
   let initial = "";
@@ -1095,7 +1276,7 @@ async function createItem(parent, isDir) {
   for (;;) {
     const name = await promptName({
       title: isDir ? "New folder" : "New file",
-      copy: parent ? `Inside ${parent}` : "Inside the vault root",
+      copy: parent ? `Inside ${parent}` : "Inside the repository root",
       label: "Name",
       submit: isDir ? "Create folder" : "Create file",
       initial,
@@ -1179,14 +1360,14 @@ async function removeRecent(path) {
 function revealInTree(path) {
   const node = findNode(state.tree, path);
   if (!node) {
-    setStatus("That file is no longer in the vault.");
+    setStatus("That file is no longer in the repository.");
     return;
   }
   ensureExpanded(path);
   state.selected = path;
   state.pendingTreeFocus = path;
   renderTree();
-  setStatus(`Revealed ${basename(path)} in the vault tree.`);
+  setStatus(`Revealed ${basename(path)} in the repository tree.`);
 }
 
 function remapExpanded(oldPath, newPath) {
@@ -1204,7 +1385,12 @@ function remapExpanded(oldPath, newPath) {
 function remapCurrentFile(oldPath, newPath) {
   if (!state.currentFile || !isPathWithin(state.currentFile.path, oldPath)) return;
   state.currentFile.path = `${newPath}${state.currentFile.path.slice(oldPath.length)}`;
-  els.filePath.textContent = state.currentFile.path;
+  state.currentFile.name = basename(state.currentFile.path);
+  els.fileName.textContent = state.currentFile.name;
+  els.filePathTip.textContent = state.currentFile.path;
+  els.filePathTip.title = parentOf(state.currentFile.path)
+    ? `${parentOf(state.currentFile.path)}/`
+    : "";
   updateTitle();
 }
 
@@ -1301,6 +1487,44 @@ async function showRevisions(path) {
 /* Files and editor                                                    */
 /* ------------------------------------------------------------------ */
 
+/** Encoding, line endings, size, and counts for a file.
+ *  Uses the live editor text when the file on screen is the one asked for. */
+async function showProperties(path) {
+  let file;
+  try {
+    file = await api.readFile(path);
+  } catch (error) {
+    setStatus(errText(error));
+    return;
+  }
+  const live = state.currentFile?.path === file.path && state.editor;
+  const content = live ? state.editor.getValue() : file.content ?? "";
+  const size = live && state.currentFile.size != null ? state.currentFile.size : file.size;
+  const words = countWords(content);
+  const chars = content.replace(/\s/g, "").length;
+  const lines = content ? content.split(/\r\n|\r|\n/).length : 0;
+  const rows = [
+    ["Name", file.name],
+    ["Location", `${state.repository?.path ?? ""}${parentOf(file.path) ? `\\${parentOf(file.path).replaceAll("/", "\\")}` : ""}`],
+    ["Encoding", file.encodingLabel],
+    ["Line endings", file.eolLabel],
+    ["Size", formatBytes(size ?? 0)],
+    ["Words", formatCount(words)],
+    ["Characters", `${formatCount(chars)} (without spaces)`],
+    ["Lines", formatCount(lines)],
+    ["Modified", formatDate(file.modifiedMs)],
+  ];
+  els.propertiesList.textContent = "";
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value ?? "";
+    els.propertiesList.append(dt, dd);
+  }
+  els.propertiesDialog.showModal();
+}
+
 function askUnsavedChanges() {
   return new Promise((resolve) => {
     const name = state.currentFile ? basename(state.currentFile.path) : "the open file";
@@ -1311,6 +1535,13 @@ function askUnsavedChanges() {
       resolve(els.unsavedDialog.returnValue || "cancel");
     };
     els.unsavedDialog.addEventListener("close", onClose);
+    // showModal() throws if another dialog is already modal; close those first.
+    document.querySelectorAll("dialog[open]").forEach((dialog) => {
+      if (dialog !== els.unsavedDialog) dialog.close();
+    });
+    if (els.unsavedDialog.open) {
+      els.unsavedDialog.close();
+    }
     els.unsavedDialog.showModal();
     setTimeout(() => els.unsavedSave.focus(), 0);
   });
@@ -1333,7 +1564,7 @@ async function resolvePendingChanges() {
 }
 
 async function openFile(path, line = null) {
-  if (!state.vault) return false;
+  if (!state.repository) return false;
   if (state.currentFile?.path === path) {
     if (line) state.editor?.openAtLine(line);
     ensureExpanded(path);
@@ -1368,6 +1599,7 @@ function mountFile(file, line = null) {
   closeEditor({ silent: true });
   state.currentFile = {
     path: file.path,
+    name: file.name,
     encoding: file.encoding,
     encodingLabel: file.encodingLabel,
     eol: file.eol,
@@ -1381,14 +1613,10 @@ function mountFile(file, line = null) {
   els.emptyState.hidden = true;
   els.editorPane.hidden = false;
   els.fileName.textContent = file.name;
-  els.filePath.textContent = file.path;
-  els.fileMeta.textContent = [
-    file.encodingLabel,
-    file.eolLabel,
-    formatBytes(file.size),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  els.filePathTip.textContent = file.path;
+  els.filePathTip.title = parentOf(file.path) ? `${parentOf(file.path)}/` : "";
+  updateFileStats(file.content, file.size);
+  updateTitle();
   setNotice(file.notice ?? "", file.readOnly ? "warn" : "info");
   renderFileTags();
   updateControls();
@@ -1416,6 +1644,22 @@ function mountFile(file, line = null) {
   setStatus(file.readOnly ? "Opened read-only." : "Opened.");
 }
 
+/** Closes the open file, asking about unsaved changes before letting it go. */
+async function closeCurrentFile({ silent = false } = {}) {
+  if (!state.currentFile) return false;
+  const name = state.currentFile.name;
+  const path = state.currentFile.path;
+  if (!(await resolvePendingChanges())) return false;
+  // Saving or cancelling inside the dialog may already have moved on.
+  if (state.currentFile?.path !== path) return true;
+  closeEditor({ silent: true });
+  if (state.selected === path) state.selected = null;
+  renderTree();
+  updateControls();
+  if (!silent) setStatus(`Closed ${name}.`);
+  return true;
+}
+
 function closeEditor({ silent = false } = {}) {
   clearAutosave();
   state.autosavePaused = false;
@@ -1428,8 +1672,9 @@ function closeEditor({ silent = false } = {}) {
   els.editorPane.hidden = true;
   els.fileTags.textContent = "";
   els.fileName.textContent = "";
-  els.filePath.textContent = "";
-  els.fileMeta.textContent = "";
+  els.filePathTip.textContent = "";
+  els.filePathTip.title = "";
+  updateFileStats("", 0);
   setNotice("");
   updateControls();
   updateTitle();
@@ -1477,6 +1722,7 @@ async function runAutosave() {
 
 function markDirty() {
   if (!state.currentFile || state.currentFile.readOnly) return;
+  updateFileStats(state.editor?.getValue() ?? "", state.currentFile.size);
   if (!state.dirty) {
     state.dirty = true;
     updateControls();
@@ -1520,13 +1766,7 @@ async function saveCurrent() {
     state.dirty = false;
     clearAutosave();
     state.autosavePaused = false;
-    els.fileMeta.textContent = [
-      state.currentFile.encodingLabel,
-      state.currentFile.eolLabel,
-      formatBytes(outcome.size),
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    updateFileStats(state.editor?.getValue() ?? "", outcome.size);
     updateControls();
     updateTitle();
     setStatus("Saved.");
@@ -1588,7 +1828,7 @@ function renderFileTags() {
 /* ------------------------------------------------------------------ */
 
 async function refreshUndoState() {
-  if (!state.vault) {
+  if (!state.repository) {
     state.undoInfo = { undoLabel: null, redoLabel: null };
     updateControls();
     return;
@@ -1607,7 +1847,7 @@ function diskText() {
 }
 
 async function undo() {
-  if (!state.vault || state.undoBusy) return;
+  if (!state.repository || state.undoBusy) return;
   if (state.currentFile && state.dirty) {
     if (state.currentFile.readOnly) {
       setStatus("This file is read-only.");
@@ -1650,7 +1890,7 @@ async function undo() {
 }
 
 async function redo() {
-  if (!state.vault || state.undoBusy || !state.undoInfo.redoLabel) return;
+  if (!state.repository || state.undoBusy || !state.undoInfo.redoLabel) return;
   const currentPath = state.currentFile?.path ?? null;
   state.undoBusy = true;
   try {
@@ -1666,7 +1906,7 @@ async function redo() {
 }
 
 /** Bring the tree, the open editor and the organization lists back in step
- *  with the vault after a step was undone or redone. */
+ *  with the repository after a step was undone or redone. */
 async function afterUndoStep(previousPath) {
   await loadTree();
   await refreshOrganization();
@@ -1686,7 +1926,7 @@ async function syncEditorWithDisk(previousPath) {
       await openFile(restored);
     } else {
       closeEditor({ silent: true });
-      setStatus("The open file is no longer in the vault.");
+      setStatus("The open file is no longer in the repository.");
     }
     return;
   }
@@ -1839,14 +2079,70 @@ function promptTags(initial) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Short-list limit popup                                              */
+/* ------------------------------------------------------------------ */
+
+let limitTarget = "pinned";
+
+function openLimitDialog(target) {
+  limitTarget = target === "recent" ? "recent" : "pinned";
+  const pinned = limitTarget === "pinned";
+  const current = state.settings[pinned ? "pinnedLimit" : "recentLimit"] ?? 5;
+  els.limitTitle.textContent = pinned ? "Pinned" : "Recent";
+  els.limitCopy.textContent = pinned
+    ? "How many pinned files to show in the sidebar."
+    : "How many recent files to show in the sidebar.";
+  els.limitInput.value = String(current);
+  els.limitError.hidden = true;
+  els.limitDialog.showModal();
+  setTimeout(() => {
+    els.limitInput.focus();
+    els.limitInput.select();
+  }, 0);
+}
+
+async function saveLimitFromForm() {
+  const value = Math.round(Number(els.limitInput.value));
+  if (!Number.isFinite(value) || value < 1 || value > 100) {
+    els.limitError.hidden = false;
+    els.limitError.textContent = "Enter a whole number from 1 to 100.";
+    return;
+  }
+  const key = limitTarget === "pinned" ? "pinnedLimit" : "recentLimit";
+  if (value === (state.settings[key] ?? 5)) {
+    els.limitDialog.close();
+    return;
+  }
+  const settings = { ...state.savedSettings, [key]: value };
+  try {
+    const saved = await api.saveSettings(settings);
+    els.limitDialog.close();
+    state.savedSettings = { ...state.savedSettings, ...saved };
+    applySettings(saved);
+    setStatus(
+      limitTarget === "pinned"
+        ? `Showing ${value} pinned ${value === 1 ? "file" : "files"}.`
+        : `Showing ${value} recent ${value === 1 ? "file" : "files"}.`
+    );
+  } catch (error) {
+    els.limitError.hidden = false;
+    els.limitError.textContent = errText(error);
+  }
+}
+
 function openSettings() {
   els.settingTheme.value = state.settings.theme ?? "system";
   els.settingFontFamily.value = state.settings.fontFamily ?? "Consolas";
   // Show the size actually in use, so a manual zoom is visible here too.
   els.settingFontSize.value = String(editorFontSize());
   els.settingTabWidth.value = String(state.settings.tabWidth ?? 4);
-  els.settingPinnedLimit.value = String(state.settings.pinnedLimit ?? 5);
-  els.settingRecentLimit.value = String(state.settings.recentLimit ?? 5);
+  if (els.settingPinnedLimit) {
+    els.settingPinnedLimit.value = String(state.settings.pinnedLimit ?? 5);
+  }
+  if (els.settingRecentLimit) {
+    els.settingRecentLimit.value = String(state.settings.recentLimit ?? 5);
+  }
   els.settingAutosaveMode.value = state.settings.autosaveMode ?? "off";
   els.settingAutosaveIdle.value = String(state.settings.autosaveIdleSecs ?? 20);
   els.settingAutosaveInterval.value = String(
@@ -1858,8 +2154,8 @@ function openSettings() {
   els.settingRevisionMonthly.value = String(state.settings.revisionMonthly ?? 12);
   els.settingRevisionYearly.value = String(state.settings.revisionYearly ?? 100);
   els.settingSort.value = state.settings.defaultSort ?? "name";
-  state.settingsDraftVault = state.settings.defaultVault ?? null;
-  els.settingDefaultVault.value = state.settingsDraftVault ?? "";
+  state.settingsDraftRepository = state.settings.defaultRepository ?? null;
+  els.settingDefaultRepository.value = state.settingsDraftRepository ?? "";
   els.settingsError.hidden = true;
   els.settingsDialog.showModal();
 }
@@ -1876,14 +2172,8 @@ async function saveSettingsFromForm() {
       16,
       Math.max(1, Math.round(Number(els.settingTabWidth.value) || 4))
     ),
-    pinnedLimit: Math.min(
-      100,
-      Math.max(1, Math.round(Number(els.settingPinnedLimit.value) || 5))
-    ),
-    recentLimit: Math.min(
-      100,
-      Math.max(1, Math.round(Number(els.settingRecentLimit.value) || 5))
-    ),
+    pinnedLimit: state.savedSettings.pinnedLimit ?? 5,
+    recentLimit: state.savedSettings.recentLimit ?? 5,
     autosaveMode: els.settingAutosaveMode.value,
     autosaveIdleSecs: Math.min(
       60,
@@ -1914,7 +2204,7 @@ async function saveSettingsFromForm() {
       Math.max(0, Math.round(Number(els.settingRevisionYearly.value) || 0))
     ),
     defaultSort: els.settingSort.value,
-    defaultVault: state.settingsDraftVault,
+    defaultRepository: state.settingsDraftRepository,
     desktopShortcutPrompted: Boolean(state.settings.desktopShortcutPrompted),
   };
   try {
@@ -1923,6 +2213,7 @@ async function saveSettingsFromForm() {
     // A saved font size takes over from any manual zoom.
     state.zoom = null;
     saveZoom();
+    state.savedSettings = { ...state.savedSettings, ...saved };
     applySettings(saved);
     await loadTree();
     setStatus("Settings saved.");
@@ -2026,21 +2317,21 @@ function wireEvents() {
   // The editor sits inside the pane, and wheel events bubble, so one
   // listener on the pane covers the whole editing area.
   wireZoom(els.editorPane);
-  els.openVault.addEventListener("click", chooseVault);
+  els.openRepository.addEventListener("click", chooseRepository);
   els.emptyOpen.addEventListener("click", () => {
-    if (state.vault) createItem(targetFolder(), false);
-    else chooseVault();
+    if (state.repository) createItem(targetFolder(), false);
+    else chooseRepository();
   });
 
   els.rescan.addEventListener("click", async () => {
-    if (!state.vault) return;
+    if (!state.repository) return;
     els.rescan.disabled = true;
     setStatus("Rebuilding the search index…");
     try {
-      const count = await api.rescan();
+      await api.rescan();
       await loadTree();
       await refreshOrganization();
-      setStatus(`Rescanned ${count} file${count === 1 ? "" : "s"}.`);
+      // The count is in the status bar now; no need to repeat it here.
     } catch (error) {
       setStatus(errText(error));
     } finally {
@@ -2049,28 +2340,35 @@ function wireEvents() {
   });
 
   els.settingsButton.addEventListener("click", openSettings);
-  els.chooseDefaultVault.addEventListener("click", async () => {
+  els.pinnedTitle.addEventListener("click", () => openLimitDialog("pinned"));
+  els.recentTitle.addEventListener("click", () => openLimitDialog("recent"));
+  els.limitForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveLimitFromForm();
+  });
+  els.limitCancel.addEventListener("click", () => els.limitDialog.close());
+  els.chooseDefaultRepository.addEventListener("click", async () => {
     const selected = await openDialog({
       directory: true,
       multiple: false,
-      title: "Choose the default vault",
+      title: "Choose the default repository",
     });
     if (selected) {
-      state.settingsDraftVault = selected;
-      els.settingDefaultVault.value = selected;
+      state.settingsDraftRepository = selected;
+      els.settingDefaultRepository.value = selected;
     }
   });
-  els.useCurrentVault.addEventListener("click", () => {
-    if (!state.vault) {
-      setStatus("No vault is open.");
+  els.useCurrentRepository.addEventListener("click", () => {
+    if (!state.repository) {
+      setStatus("No repository is open.");
       return;
     }
-    state.settingsDraftVault = state.vault.path;
-    els.settingDefaultVault.value = state.vault.path;
+    state.settingsDraftRepository = state.repository.path;
+    els.settingDefaultRepository.value = state.repository.path;
   });
-  els.clearDefaultVault.addEventListener("click", () => {
-    state.settingsDraftVault = null;
-    els.settingDefaultVault.value = "";
+  els.clearDefaultRepository.addEventListener("click", () => {
+    state.settingsDraftRepository = null;
+    els.settingDefaultRepository.value = "";
   });
 
   els.settingsForm.addEventListener("submit", (event) => {
@@ -2086,6 +2384,9 @@ function wireEvents() {
   els.newFolder.addEventListener("click", () => createItem(targetFolder(), true));
   els.wrapToggle.addEventListener("click", toggleWrap);
   els.saveButton.addEventListener("click", saveCurrent);
+  els.closeFile.addEventListener("click", () => {
+    closeCurrentFile();
+  });
   els.undoButton.addEventListener("click", undo);
   els.redoButton.addEventListener("click", redo);
   els.noticeClose.addEventListener("click", dismissNotice);
@@ -2102,6 +2403,20 @@ function wireEvents() {
     showContextMenu(event.clientX, event.clientY, null);
   });
   els.tree.addEventListener("keydown", handleTreeKeydown);
+  els.editorPane.addEventListener("contextmenu", (event) => {
+    if (!state.currentFile) return;
+    event.preventDefault();
+    showFileContextMenu(event.clientX, event.clientY);
+  });
+  els.brandButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleBrandPopover();
+  });
+  document.addEventListener("click", (event) => {
+    if (els.brandPopover.hidden) return;
+    if (els.brandPopover.contains(event.target)) return;
+    hideBrandPopover();
+  });
   els.treeFilter.addEventListener("input", () => {
     state.fileFilter = els.treeFilter.value.trim();
     renderTree();
@@ -2204,9 +2519,15 @@ function wireEvents() {
         event.preventDefault();
         saveCurrent();
       }
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "w") {
+      // The window is closed from the title bar, so this only closes the file.
+      if (state.currentFile) {
+        event.preventDefault();
+        closeCurrentFile();
+      }
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       // The editor handles its own history first and only lets this run once
-      // that history is empty, so vault steps are undone from anywhere.
+      // that history is empty, so repository steps are undone from anywhere.
       const typing =
         els.treeFilter === document.activeElement ||
         els.search === document.activeElement ||
@@ -2233,6 +2554,55 @@ function wireEvents() {
   els.tree.addEventListener("scroll", hideContextMenu, true);
 
   const appWindow = getCurrentWindow();
+  els.windowMinimize?.addEventListener("click", () => {
+    appWindow.minimize().catch(() => {});
+  });
+  els.windowMaximize?.addEventListener("click", () => {
+    appWindow.toggleMaximize().catch(() => {});
+  });
+  els.windowClose?.addEventListener("click", () => {
+    appWindow.close().catch(() => {});
+  });
+  const syncMaximized = async () => {
+    try {
+      const maximized = await appWindow.isMaximized();
+      document.body.classList.toggle("maximized", maximized);
+      if (els.windowMaximize) {
+        els.windowMaximize.title = maximized ? "Restore" : "Maximize";
+        els.windowMaximize.setAttribute("aria-label", maximized ? "Restore" : "Maximize");
+        els.windowMaximize.classList.toggle("is-maximized", maximized);
+      }
+    } catch {
+      /* window may be closing */
+    }
+  };
+  appWindow.onResized(() => {
+    syncMaximized();
+  }).catch(() => {});
+  syncMaximized();
+
+  // The window has no native frame, so the edges are dragged by hand.
+  for (const direction of [
+    "North",
+    "South",
+    "East",
+    "West",
+    "NorthEast",
+    "NorthWest",
+    "SouthEast",
+    "SouthWest",
+  ]) {
+    const handle = document.createElement("div");
+    handle.className = "resize-handle";
+    handle.dataset.resize = direction;
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      appWindow.startResizeDragging(direction).catch(() => {});
+    });
+    document.body.append(handle);
+  }
+
   appWindow
     .onCloseRequested(async (event) => {
       if (!(await resolvePendingChanges())) {
@@ -2247,8 +2617,8 @@ function wireEvents() {
     })
     .catch(() => {});
 
-  listen("vault-changed", async (event) => {
-    if (!state.vault) return;
+  listen("repository-changed", async (event) => {
+    if (!state.repository) return;
     const paths = event.payload?.paths ?? [];
     await loadTree();
     await refreshOrganization();
@@ -2307,6 +2677,7 @@ async function init() {
   applyTheme();
   applySidebarWidth(loadSidebarWidth());
   updateControls();
+  updateStatusLeft();
   try {
     const snapshot = await api.bootstrap();
     applySnapshot(snapshot);
@@ -2317,6 +2688,7 @@ async function init() {
     await offerDesktopShortcut();
   } catch (error) {
     setStatus(errText(error));
+    setNotice(errText(error), "warn");
   }
 }
 

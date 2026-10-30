@@ -9,7 +9,7 @@ use flate2::Compression;
 use serde::Serialize;
 
 use crate::atomic::{atomic_create, atomic_write};
-use crate::paths::{normalize_relative, Vault, REVISIONS_DIR};
+use crate::paths::{normalize_relative, Repository, REVISIONS_DIR};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Retention {
@@ -38,22 +38,22 @@ pub struct RevisionInfo {
     pub size: i64,
 }
 
-pub fn revision_dir(vault: &Vault, relative: &str) -> Result<PathBuf, String> {
+pub fn revision_dir(repository: &Repository, relative: &str) -> Result<PathBuf, String> {
     let normalized = normalize_relative(relative).map_err(|error| error.to_string())?;
-    Ok(vault.root().join(REVISIONS_DIR).join(normalized))
+    Ok(repository.root().join(REVISIONS_DIR).join(normalized))
 }
 
 pub fn capture(
-    vault: &Vault,
+    repository: &Repository,
     relative: &str,
     bytes: &[u8],
     retention: &Retention,
 ) -> Result<(), String> {
-    capture_at(vault, relative, bytes, retention, Utc::now())
+    capture_at(repository, relative, bytes, retention, Utc::now())
 }
 
 fn capture_at(
-    vault: &Vault,
+    repository: &Repository,
     relative: &str,
     bytes: &[u8],
     retention: &Retention,
@@ -62,7 +62,7 @@ fn capture_at(
     if bytes.is_empty() || retention.disabled() {
         return Ok(());
     }
-    let root = vault.root().join(REVISIONS_DIR);
+    let root = repository.root().join(REVISIONS_DIR);
     if root.exists() {
         let metadata = std::fs::symlink_metadata(&root)
             .map_err(|_| "The revision folder could not be used.".to_string())?;
@@ -74,11 +74,11 @@ fn capture_at(
             .map_err(|_| "The revision folder could not be created.".to_string())?;
         hide_root(&root);
     }
-    ensure_inside(vault, &root)?;
-    let directory = revision_dir(vault, relative)?;
+    ensure_inside(repository, &root)?;
+    let directory = revision_dir(repository, relative)?;
     std::fs::create_dir_all(&directory)
         .map_err(|_| "The revision folder could not be created.".to_string())?;
-    ensure_inside(vault, &directory)?;
+    ensure_inside(repository, &directory)?;
     let compressed = compress(bytes)?;
     let target = unique_path(&directory, now);
     atomic_create(&target, &compressed)
@@ -87,12 +87,12 @@ fn capture_at(
     Ok(())
 }
 
-pub fn list(vault: &Vault, relative: &str) -> Result<Vec<RevisionInfo>, String> {
-    let directory = revision_dir(vault, relative)?;
+pub fn list(repository: &Repository, relative: &str) -> Result<Vec<RevisionInfo>, String> {
+    let directory = revision_dir(repository, relative)?;
     if !directory.exists() {
         return Ok(Vec::new());
     }
-    let directory = ensure_inside(vault, &directory)?;
+    let directory = ensure_inside(repository, &directory)?;
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(_) => return Ok(Vec::new()),
@@ -110,7 +110,7 @@ pub fn list(vault: &Vault, relative: &str) -> Result<Vec<RevisionInfo>, String> 
             modified_ms: metadata
                 .as_ref()
                 .and_then(|meta| meta.modified().ok())
-                .map(crate::vault::system_ms)
+                .map(crate::repository::system_ms)
                 .unwrap_or(0),
             size: metadata
                 .as_ref()
@@ -123,7 +123,7 @@ pub fn list(vault: &Vault, relative: &str) -> Result<Vec<RevisionInfo>, String> 
 }
 
 pub fn restore(
-    vault: &Vault,
+    repository: &Repository,
     relative: &str,
     id: &str,
     retention: &Retention,
@@ -134,15 +134,15 @@ pub fn restore(
     {
         return Err("That revision is not valid.".to_string());
     }
-    let directory = ensure_inside(vault, &revision_dir(vault, relative)?)?;
+    let directory = ensure_inside(repository, &revision_dir(repository, relative)?)?;
     let compressed = std::fs::read(directory.join(id))
         .map_err(|_| "The revision could not be read.".to_string())?;
     let bytes = decompress(&compressed)?;
-    let target = vault
+    let target = repository
         .resolve_for_write(relative)
         .map_err(|error| error.to_string())?;
     if let Ok(current) = std::fs::read(&target) {
-        if let Err(error) = capture(vault, relative, &current, retention) {
+        if let Err(error) = capture(repository, relative, &current, retention) {
             crate::log::line("warn", &format!("revision capture failed: {error}"));
         }
     }
@@ -151,23 +151,23 @@ pub fn restore(
     Ok(())
 }
 
-pub fn move_path(vault: &Vault, old: &str, new: &str) -> Result<(), String> {
-    let old_dir = revision_dir(vault, old)?;
+pub fn move_path(repository: &Repository, old: &str, new: &str) -> Result<(), String> {
+    let old_dir = revision_dir(repository, old)?;
     if !old_dir.exists() {
         return Ok(());
     }
-    ensure_inside(vault, &old_dir)?;
-    let new_dir = revision_dir(vault, new)?;
+    ensure_inside(repository, &old_dir)?;
+    let new_dir = revision_dir(repository, new)?;
     if let Some(parent) = new_dir.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|_| "The revision folder could not be moved.".to_string())?;
-        ensure_inside(vault, parent)?;
+        ensure_inside(repository, parent)?;
     }
     if !new_dir.exists() {
         return std::fs::rename(&old_dir, &new_dir)
             .map_err(|_| "The revision folder could not be moved.".to_string());
     }
-    ensure_inside(vault, &new_dir)?;
+    ensure_inside(repository, &new_dir)?;
     if let Ok(entries) = std::fs::read_dir(&old_dir) {
         for entry in entries.flatten() {
             let target = new_dir.join(entry.file_name());
@@ -180,20 +180,20 @@ pub fn move_path(vault: &Vault, old: &str, new: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn remove_path(vault: &Vault, relative: &str) -> Result<(), String> {
-    let directory = revision_dir(vault, relative)?;
+pub fn remove_path(repository: &Repository, relative: &str) -> Result<(), String> {
+    let directory = revision_dir(repository, relative)?;
     if directory.exists() {
-        ensure_inside(vault, &directory)?;
+        ensure_inside(repository, &directory)?;
         std::fs::remove_dir_all(&directory)
             .map_err(|_| "The revision folder could not be removed.".to_string())?;
     }
     Ok(())
 }
 
-fn ensure_inside(vault: &Vault, path: &Path) -> Result<PathBuf, String> {
+fn ensure_inside(repository: &Repository, path: &Path) -> Result<PathBuf, String> {
     let canonical = std::fs::canonicalize(path)
         .map_err(|_| "The revision folder could not be used.".to_string())?;
-    if !crate::paths::is_inside(vault.root(), &canonical) {
+    if !crate::paths::is_inside(repository.root(), &canonical) {
         return Err("The revision folder could not be used.".to_string());
     }
     Ok(canonical)
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn captures_lists_and_restores_revisions() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"one\n").unwrap();
         let retention = Retention {
@@ -376,7 +376,7 @@ mod tests {
             yearly: 100,
         };
         capture_at(
-            &vault,
+            &repository,
             "note.txt",
             b"one\n",
             &retention,
@@ -384,17 +384,17 @@ mod tests {
         )
         .unwrap();
         capture_at(
-            &vault,
+            &repository,
             "note.txt",
             b"two\n",
             &retention,
             Utc.with_ymd_and_hms(2026, 3, 10, 11, 0, 0).unwrap(),
         )
         .unwrap();
-        let revisions = list(&vault, "note.txt").unwrap();
+        let revisions = list(&repository, "note.txt").unwrap();
         assert_eq!(revisions.len(), 2);
         let oldest = revisions.last().unwrap().id.clone();
-        restore(&vault, "note.txt", &oldest, &retention).unwrap();
+        restore(&repository, "note.txt", &oldest, &retention).unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"one\n");
         assert!(dir.path().join(REVISIONS_DIR).exists());
     }
@@ -440,10 +440,10 @@ mod tests {
     #[test]
     fn capture_prunes_by_local_hour_and_moves_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         let retention = retention(1);
         capture_at(
-            &vault,
+            &repository,
             "note.txt",
             b"zero\n",
             &retention,
@@ -451,25 +451,25 @@ mod tests {
         )
         .unwrap();
         capture_at(
-            &vault,
+            &repository,
             "note.txt",
             b"one\n",
             &retention,
             Utc.with_ymd_and_hms(2026, 3, 10, 12, 30, 0).unwrap(),
         )
         .unwrap();
-        assert_eq!(list(&vault, "note.txt").unwrap().len(), 1);
-        move_path(&vault, "note.txt", "archive/note.txt").unwrap();
-        assert!(list(&vault, "note.txt").unwrap().is_empty());
-        assert_eq!(list(&vault, "archive/note.txt").unwrap().len(), 1);
-        remove_path(&vault, "archive/note.txt").unwrap();
-        assert!(list(&vault, "archive/note.txt").unwrap().is_empty());
+        assert_eq!(list(&repository, "note.txt").unwrap().len(), 1);
+        move_path(&repository, "note.txt", "archive/note.txt").unwrap();
+        assert!(list(&repository, "note.txt").unwrap().is_empty());
+        assert_eq!(list(&repository, "archive/note.txt").unwrap().len(), 1);
+        remove_path(&repository, "archive/note.txt").unwrap();
+        assert!(list(&repository, "archive/note.txt").unwrap().is_empty());
     }
 
     #[test]
     fn disabled_retention_captures_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
+        let repository = Repository::open(dir.path()).unwrap();
         assert!(Retention {
             hourly: 0,
             daily: 0,
@@ -478,7 +478,7 @@ mod tests {
             yearly: 0,
         }
         .disabled());
-        capture(&vault, "note.txt", b"text\n", &retention(0)).unwrap();
-        assert!(list(&vault, "note.txt").unwrap().is_empty());
+        capture(&repository, "note.txt", b"text\n", &retention(0)).unwrap();
+        assert!(list(&repository, "note.txt").unwrap().is_empty());
     }
 }

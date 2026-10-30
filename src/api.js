@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 /** Every backend call goes through this module; no network access exists. */
 export const api = {
   bootstrap: () => invoke("bootstrap"),
-  openVault: (path) => invoke("open_vault", { path }),
+  openRepository: (path) => invoke("open_repository", { path }),
   listTree: () => invoke("list_tree"),
   readFile: (path) => invoke("read_file", { path }),
   openExternal: (path) => invoke("open_external", { path }),

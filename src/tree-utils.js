@@ -32,6 +32,10 @@ export function countFiles(tree) {
   return flattenTree(tree).filter((node) => !node.isDir).length;
 }
 
+export function countFolders(tree) {
+  return flattenTree(tree).filter((node) => node.isDir).length;
+}
+
 export function findNode(tree, path) {
   return flattenTree(tree).find((node) => node.path === path) ?? null;
 }

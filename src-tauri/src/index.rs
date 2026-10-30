@@ -643,8 +643,8 @@ fn has_folded_column(connection: &Connection) -> rusqlite::Result<bool> {
     Ok(false)
 }
 
-pub fn index_database_path(data_dir: &Path, vault_root: &Path) -> PathBuf {
-    let text = vault_root.to_string_lossy();
+pub fn index_database_path(data_dir: &Path, repository_root: &Path) -> PathBuf {
+    let text = repository_root.to_string_lossy();
     #[cfg(windows)]
     let text = text.to_lowercase();
     let hash = fnv1a64(text.as_bytes());

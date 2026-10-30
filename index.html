@@ -8,13 +8,29 @@
   </head>
   <body>
     <div id="app" class="app">
-      <header class="topbar">
-        <div class="brand" aria-label="Plainfold">
-          <span class="brand-mark" aria-hidden="true"><span class="brand-cursor"></span></span>
-          <span class="brand-name">Plainfold</span>
+      <header class="topbar" data-tauri-drag-region>
+        <div class="brand-wrap">
+          <button id="brand-button" class="brand" type="button" aria-label="Plainfold" aria-haspopup="dialog" aria-expanded="false" title="About Plainfold">
+            <span class="brand-mark" aria-hidden="true"><span class="brand-cursor"></span></span>
+            <span class="brand-name">Plainfold</span>
+          </button>
+          <div id="brand-popover" class="brand-popover" role="dialog" aria-label="About Plainfold" hidden>
+            <strong>Plainfold</strong>
+            <div class="brand-meta">
+              <span id="app-version" class="brand-version"></span>
+              <span id="repo-link" class="repo-link" title="GitHub repository URL not configured" aria-disabled="true">
+                <svg class="repo-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+                  <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+                </svg>
+                <span class="repo-label">GitHub</span>
+              </span>
+            </div>
+            <p class="brand-note">Plain text, plain files. Notes stay real files on disk.</p>
+          </div>
         </div>
+        <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
         <div class="toolbar">
-          <button id="open-vault" class="button primary" type="button">Open Vault</button>
+          <button id="open-repository" class="button primary" type="button">Open Repository</button>
           <div class="search-wrap">
             <input
               id="search"
@@ -33,22 +49,49 @@
           <button id="rescan" class="button" type="button" title="Rebuild the search index">Rescan</button>
           <button id="settings-button" class="button" type="button">Settings</button>
         </div>
+        <div class="window-controls">
+          <button id="window-minimize" class="window-control" type="button" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false"><path stroke="currentColor" stroke-width="1" d="M2 5.5h6"/></svg>
+          </button>
+          <button id="window-maximize" class="window-control" type="button" title="Maximize" aria-label="Maximize">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false"><rect x="2" y="2" width="6" height="6" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+          </button>
+          <button id="window-close" class="window-control window-control-close" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false"><path stroke="currentColor" stroke-width="1.1" d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>
+          </button>
+        </div>
       </header>
 
       <main class="layout">
-        <aside class="sidebar" aria-label="Vault navigation">
+        <aside class="sidebar" aria-label="Repository navigation">
           <div class="sidebar-scroll">
             <section class="side-section">
-              <h2 class="side-title">Pinned</h2>
+              <div class="section-head">
+                <button
+                  id="pinned-title"
+                  class="side-title limit-title"
+                  type="button"
+                  title="Choose how many pinned files are shown"
+                  aria-haspopup="dialog"
+                >Pinned</button>
+              </div>
               <ul id="pinned-list" class="short-list"></ul>
             </section>
             <section class="side-section">
-              <h2 class="side-title">Recent</h2>
+              <div class="section-head">
+                <button
+                  id="recent-title"
+                  class="side-title limit-title"
+                  type="button"
+                  title="Choose how many recent files are shown"
+                  aria-haspopup="dialog"
+                >Recent</button>
+              </div>
               <ul id="recent-list" class="short-list"></ul>
             </section>
             <section class="side-section tree-section">
               <div class="section-head">
-                <h2 class="side-title">Vault</h2>
+                <h2 id="repository-label" class="side-title">Repository</h2>
                 <div class="tree-actions">
                   <button id="sort-alpha" class="icon-button" type="button" title="Sort alphabetically">A-Z</button>
                   <button id="new-file" class="icon-button" type="button" title="New file">+ File</button>
@@ -64,18 +107,18 @@
                   placeholder="Filter files by name or extension (*.jpg)"
                   autocomplete="off"
                   spellcheck="false"
-                  aria-label="Filter vault files"
+                  aria-label="Filter repository files"
                 />
               </div>
-              <div id="tree" class="tree" role="tree" aria-label="Vault files" aria-multiselectable="false"></div>
-              <p id="tree-empty" class="muted empty-hint" hidden>This vault is empty.</p>
+              <div id="tree" class="tree" role="tree" aria-label="Repository files" aria-multiselectable="false"></div>
+              <p id="tree-empty" class="muted empty-hint" hidden>This repository is empty.</p>
             </section>
           </div>
           <div id="root-drop-zone" class="root-drop-zone" hidden>
-            Drop here to move to vault root
+            Drop here to move to the repository root
           </div>
-          <div class="sidebar-footer" title="Drop items here to move them to the vault root">
-            <span id="vault-name">No vault open</span>
+          <div class="sidebar-footer">
+            <span class="root-drop-hint">Drop here to move to the root</span>
           </div>
         </aside>
         <div
@@ -91,6 +134,14 @@
         ></div>
 
         <section class="workspace">
+          <div id="repo-loading" class="repo-loading" role="status" aria-live="polite" hidden>
+            <div class="repo-loading-card">
+              <div class="spinner" aria-hidden="true"></div>
+              <strong id="repo-loading-title" class="repo-loading-title">Opening repository</strong>
+              <span id="repo-loading-copy" class="repo-loading-copy"></span>
+            </div>
+          </div>
+
           <div id="search-results" class="search-results" role="dialog" aria-label="Search results" hidden>
             <div class="results-head">
               <h2>Search results</h2>
@@ -103,20 +154,20 @@
           <div id="empty-state" class="empty-state">
             <div class="paper" aria-hidden="true"><span class="paper-cursor"></span></div>
             <h1>Plain text, plain files.</h1>
-            <p>Open a folder as your vault. Every note stays a real file on disk, in the encoding and line endings it already uses.</p>
+            <p>Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.</p>
             <button id="empty-open" class="button primary" type="button">Open a folder</button>
           </div>
 
           <div id="editor-pane" class="editor-pane" hidden>
             <div class="file-header">
               <div class="file-title">
-                <strong id="file-name"></strong>
-                <span id="file-path" class="file-path"></span>
+                <strong id="file-name" class="file-name" tabindex="0" aria-describedby="file-path-tip"></strong>
+                <span id="file-path-tip" class="file-path-tip" role="tooltip"></span>
               </div>
               <div class="file-actions">
-                <span id="file-meta" class="file-meta"></span>
                 <button id="wrap-toggle" class="button small" type="button" aria-pressed="false">Wrap off</button>
                 <button id="save-button" class="button small primary" type="button">Save</button>
+                <button id="close-file" class="button small" type="button" title="Close (Ctrl+W)" aria-label="Close file">Close</button>
               </div>
             </div>
             <div id="file-tags" class="file-tags"></div>
@@ -129,18 +180,32 @@
         </section>
       </main>
 
-      <footer class="statusbar" role="status" aria-live="polite">
-        <span id="status-left">Ready</span>
-        <span class="status-meta">
-          <span id="app-version"></span>
-          <span class="status-divider" aria-hidden="true">·</span>
-          <span id="repo-placeholder" title="GitHub repository URL not configured">GitHub: coming soon</span>
+      <footer class="statusbar">
+        <span id="status-left"></span>
+        <span class="status-center">
+          <span id="status-message" class="status-message" role="status" aria-live="polite" hidden></span>
         </span>
         <span id="status-right"></span>
       </footer>
     </div>
 
     <div id="context-menu" class="context-menu" role="menu" hidden></div>
+
+    <dialog id="limit-dialog" class="dialog limit-dialog" aria-labelledby="limit-title">
+      <form id="limit-form" method="dialog">
+        <h2 id="limit-title">Pinned</h2>
+        <p class="muted" id="limit-copy">How many pinned files to show.</p>
+        <label class="field">
+          <span>Files shown</span>
+          <input id="limit-input" type="number" min="1" max="100" step="1" autocomplete="off" />
+        </label>
+        <p id="limit-error" class="form-error" hidden></p>
+        <div class="dialog-actions">
+          <button id="limit-cancel" class="button" type="button">Cancel</button>
+          <button id="limit-submit" class="button primary" value="default">Apply</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="prompt-dialog" class="dialog" aria-labelledby="prompt-title">
       <form id="prompt-form" method="dialog">
@@ -198,16 +263,32 @@
       </form>
     </dialog>
 
+    <dialog id="properties-dialog" class="dialog" aria-labelledby="properties-title">
+      <form method="dialog">
+        <h2 id="properties-title">Properties</h2>
+        <dl id="properties-list" class="properties-list"></dl>
+        <div class="dialog-actions">
+          <button class="button primary" type="submit" value="close">Close</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="settings-dialog" class="dialog settings-dialog" aria-labelledby="settings-title">
       <form id="settings-form" method="dialog">
         <h2 id="settings-title">Settings</h2>
         <div class="settings-grid">
-          <label class="field" title="Choose light, dark, or follow the operating system theme.">
+          <label class="field" title="Choose a color theme, or follow the operating system.">
             <span>Theme</span>
             <select id="setting-theme">
               <option value="system">Follow the system</option>
               <option value="light">Light</option>
               <option value="dark">Dark</option>
+              <option value="sepia">Sepia</option>
+              <option value="nord">Nord</option>
+              <option value="solarized-light">Solarized Light</option>
+              <option value="solarized-dark">Solarized Dark</option>
+              <option value="midnight">Midnight</option>
+              <option value="forest">Forest</option>
             </select>
           </label>
           <label class="field" title="Font family used by the editor.">
@@ -221,14 +302,6 @@
           <label class="field" title="Number of spaces inserted by Tab. Range 1-16.">
             <span>Tab width</span>
             <input id="setting-tab-width" type="number" min="1" max="16" step="1" />
-          </label>
-          <label class="field" title="Maximum pinned files shown in the Pinned section. Range 1-100.">
-            <span>Pinned items shown</span>
-            <input id="setting-pinned-limit" type="number" min="1" max="100" step="1" />
-          </label>
-          <label class="field" title="Maximum recent files shown in the Recent section. Range 1-100.">
-            <span>Recent items shown</span>
-            <input id="setting-recent-limit" type="number" min="1" max="100" step="1" />
           </label>
           <label class="field" title="Autosave only runs while the open file has unsaved changes. Off, after idle, or fixed interval.">
             <span>Autosave</span>
@@ -266,7 +339,7 @@
             <span>Revisions: yearly</span>
             <input id="setting-revision-yearly" type="number" min="0" max="1000" step="1" />
           </label>
-          <label class="field" title="Default ordering for folders and files in the vault tree.">
+          <label class="field" title="Default ordering for folders and files in the repository tree.">
             <span>Default sort order</span>
             <select id="setting-sort">
               <option value="name">Name</option>
@@ -275,12 +348,12 @@
             </select>
           </label>
           <label class="field wide" title="Folder opened automatically at launch.">
-            <span>Default vault folder</span>
+            <span>Default repository folder</span>
             <div class="inline-field">
-              <input id="setting-default-vault" type="text" readonly />
-              <button id="choose-default-vault" class="button" type="button">Choose</button>
-              <button id="use-current-vault" class="button" type="button">Use current</button>
-              <button id="clear-default-vault" class="button" type="button">Clear</button>
+              <input id="setting-default-repository" type="text" readonly />
+              <button id="choose-default-repository" class="button" type="button">Choose</button>
+              <button id="use-current-repository" class="button" type="button">Use current</button>
+              <button id="clear-default-repository" class="button" type="button">Clear</button>
             </div>
           </label>
         </div>
