@@ -63,6 +63,7 @@ pub fn run() {
             commands::desktop_shortcut_status,
             commands::resolve_desktop_shortcut,
             commands::save_settings,
+            commands::remove_recent_repository,
             commands::undo_state,
             commands::undo,
             commands::redo,
