@@ -365,6 +365,43 @@ pub fn open_external(
         .map_err(|_| "The file could not be opened in its default app.".to_string())
 }
 
+const UPDATE_URL_PREFIX: &str = "https://github.com/";
+const UPDATE_URL_MAX_LEN: usize = 2048;
+
+/// Update links are plain GitHub release pages. Reject anything else, not just
+/// for safety but so the only host Plainfold opens for updates is GitHub.
+fn validate_update_url(url: &str) -> bool {
+    if url.len() > UPDATE_URL_MAX_LEN {
+        return false;
+    }
+    if !url.starts_with(UPDATE_URL_PREFIX) {
+        return false;
+    }
+    if url
+        .chars()
+        .any(|character| character.is_ascii_whitespace() || character.is_ascii_control())
+    {
+        return false;
+    }
+    if url.contains('\\') {
+        return false;
+    }
+    // The checked prefix fixes the host to github.com, so no userinfo can
+    // appear before the path. Keep the explicit check in case the prefix
+    // changes later.
+    let after_scheme = &url["https://".len()..];
+    let authority_end = after_scheme.find('/').unwrap_or(after_scheme.len());
+    !after_scheme[..authority_end].contains('@')
+}
+
+#[tauri::command]
+pub fn open_update_page(url: String) -> Result<(), String> {
+    if !validate_update_url(&url) {
+        return Err("That update link could not be opened.".to_string());
+    }
+    opener::open(&url).map_err(|_| "That update link could not be opened.".to_string())
+}
+
 #[tauri::command]
 pub async fn list_revisions(
     state: State<'_, Arc<AppState>>,
@@ -1280,5 +1317,35 @@ mod tests {
         assert_eq!(settings.last_repository, None);
 
         assert!(!forget_repository(&mut settings, "C:/missing"));
+    }
+
+    #[test]
+    fn update_url_validation_accepts_github_release_pages() {
+        assert!(validate_update_url(
+            "https://github.com/your-github-user/plainfold/releases/tag/v1.2.0"
+        ));
+        assert!(validate_update_url("https://github.com/owner/repo"));
+        assert!(validate_update_url("https://github.com/"));
+        let longest = format!("https://github.com/{}", "a".repeat(2029));
+        assert_eq!(longest.len(), 2048);
+        assert!(validate_update_url(&longest));
+    }
+
+    #[test]
+    fn update_url_validation_rejects_other_targets_and_unsafe_text() {
+        assert!(!validate_update_url(""));
+        assert!(!validate_update_url("http://github.com/owner/repo"));
+        assert!(!validate_update_url("HTTPS://github.com/owner/repo"));
+        assert!(!validate_update_url("https://gitlab.com/owner/repo"));
+        assert!(!validate_update_url("https://github.com.evil/owner/repo"));
+        assert!(!validate_update_url("https://github.com@evil.com/owner/repo"));
+        assert!(!validate_update_url("https://github.com/owner/repo "));
+        assert!(!validate_update_url("https://github.com/owner/re po"));
+        assert!(!validate_update_url("https://github.com/owner/repo\n"));
+        assert!(!validate_update_url("https://github.com/owner\\repo"));
+        assert!(!validate_update_url("https://github.com/owner/repo\t"));
+        let too_long = format!("https://github.com/{}", "a".repeat(2030));
+        assert!(too_long.len() > 2048);
+        assert!(!validate_update_url(&too_long));
     }
 }

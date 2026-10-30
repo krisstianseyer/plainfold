@@ -7,6 +7,7 @@ export const api = {
   listTree: () => invoke("list_tree"),
   readFile: (path) => invoke("read_file", { path }),
   openExternal: (path) => invoke("open_external", { path }),
+  openUpdatePage: (url) => invoke("open_update_page", { url }),
   listRevisions: (path) => invoke("list_revisions", { path }),
   restoreRevision: (path, id) => invoke("restore_revision", { path, id }),
   saveFile: (path, content, encoding, eol) =>
