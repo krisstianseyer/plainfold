@@ -12,7 +12,14 @@ import {
   featureEnabled,
   groupOf,
 } from "./features.js";
-import { normalizeRepositoryEntries, repositories } from "./repositories.js";
+import {
+  configureRepositories,
+  limitRepositoryEntries,
+  normalizeRepositoryEntries,
+  reconcileRepositoryEntries,
+  repositories,
+  repositoryEntryIsActive,
+} from "./repositories.js";
 import {
   UPDATE_OWNER,
   UPDATE_REPO,
@@ -218,6 +225,9 @@ const state = {
   // Last settings known to be written to disk, used by small popups that save
   // one value without going through the Settings dialog.
   savedSettings: { ...DEFAULT_SETTINGS },
+  // Rich saved-repository entries ({ path, name, exists }) for rendering.
+  // state.settings.recentRepositories stays the server-managed path list.
+  recentRepositoryEntries: [],
   repository: null,
   tree: [],
   expanded: new Set(),
@@ -569,6 +579,10 @@ function applySettings(next) {
   state.settings.recentRepositories = Array.isArray(state.settings.recentRepositories)
     ? [...state.settings.recentRepositories]
     : [];
+  state.recentRepositoryEntries = reconcileRepositoryEntries(
+    state.recentRepositoryEntries,
+    state.settings.recentRepositories
+  );
   state.settingsDraftFeatures = new Set(state.settings.disabledFeatures);
   applyTheme();
   state.editor?.setTabWidth(state.settings.tabWidth);
@@ -698,10 +712,23 @@ async function chooseRepository() {
     return;
   }
   if (!selected) return;
-  await activateRepository(selected);
+  // The unsaved-changes question was already answered before the folder
+  // picker, so do not ask a second time.
+  await activateRepository(selected, { checkPending: false });
 }
 
-async function activateRepository(path) {
+async function activateRepository(path, { checkPending = true } = {}) {
+  if (checkPending) {
+    try {
+      // Switching repositories discards the open editor, so use the same
+      // unsaved-changes question as opening a file or closing the app.
+      if (!(await resolvePendingChanges())) return false;
+    } catch (error) {
+      setStatus(errText(error));
+      setNotice(errText(error), "warn");
+      return false;
+    }
+  }
   try {
     setStatus("Opening repository…");
     showRepositoryLoading(`Opening ${repositoryName(path)}`, "Reading the folder and its files.");
@@ -711,9 +738,11 @@ async function activateRepository(path) {
     await refreshOrganization();
     handleNotices(snapshot.notices);
     setStatus(state.repository ? `Opened ${state.repository.name}.` : "Ready");
+    return true;
   } catch (error) {
     setStatus(errText(error));
     setNotice(errText(error), "warn");
+    return false;
   } finally {
     hideRepositoryLoading();
   }
@@ -732,21 +761,30 @@ function applySnapshot(snapshot) {
   hideResults();
   state.settings = { ...DEFAULT_SETTINGS, ...snapshot.settings };
   // Snapshot-level repository data is server-managed and may be present even
-  // when an older backend omits it from settings.
-  if (Array.isArray(snapshot.recentRepositories)) {
-    state.settings.recentRepositories = normalizeRepositoryEntries(
-      snapshot.recentRepositories
-    ).map((entry) => entry.path);
-  }
-  if (snapshot.lastRepository !== undefined) {
-    state.settings.lastRepository = snapshot.lastRepository;
-  }
+  // when an older backend omits it from settings. Keep the rich entries for
+  // rendering, but mirror only their paths into settings for persistence.
   state.settings.disabledFeatures = Array.isArray(state.settings.disabledFeatures)
     ? [...state.settings.disabledFeatures]
     : [];
   state.settings.recentRepositories = Array.isArray(state.settings.recentRepositories)
     ? [...state.settings.recentRepositories]
     : [];
+  if (Array.isArray(snapshot.recentRepositories)) {
+    state.recentRepositoryEntries = normalizeRepositoryEntries(
+      snapshot.recentRepositories
+    );
+    state.settings.recentRepositories = state.recentRepositoryEntries.map(
+      (entry) => entry.path
+    );
+  } else {
+    state.recentRepositoryEntries = reconcileRepositoryEntries(
+      state.recentRepositoryEntries,
+      state.settings.recentRepositories
+    );
+  }
+  if (snapshot.lastRepository !== undefined) {
+    state.settings.lastRepository = snapshot.lastRepository;
+  }
   state.savedSettings = { ...state.settings };
   state.settingsDraftFeatures = new Set(state.settings.disabledFeatures);
   state.searchIndexMessage = "";
@@ -851,7 +889,7 @@ function renderShortLists() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Saved repositories (foundation hooks)                               */
+/* Saved repositories                                                 */
 /* ------------------------------------------------------------------ */
 
 function recentRepositoryLimit() {
@@ -861,153 +899,61 @@ function recentRepositoryLimit() {
   );
 }
 
+/** Rich entries ({ path, name, exists }) capped by the display limit. */
 function savedRepositoryEntries() {
-  return normalizeRepositoryEntries(state.settings.recentRepositories).slice(
-    0,
+  return limitRepositoryEntries(
+    state.recentRepositoryEntries,
     recentRepositoryLimit()
   );
 }
 
-function repositoryIsActive(entry) {
-  return Boolean(state.repository) && state.repository.path === entry.path;
+/**
+ * Wire the saved-repositories service. The service never imports main.js;
+ * every bit of state and every action is supplied as a callback here.
+ */
+function configureRepositoryService() {
+  configureRepositories({
+    getState: () => state,
+    getEntries: () => state.recentRepositoryEntries,
+    getSavedEntries: savedRepositoryEntries,
+    setEntries: (entries) => {
+      state.recentRepositoryEntries = normalizeRepositoryEntries(entries);
+      // Settings persistence keeps a plain path list; rendering uses the rich
+      // entries above.
+      state.settings.recentRepositories = state.recentRepositoryEntries.map(
+        (entry) => entry.path
+      );
+      // The backend points lastRepository at the newest remaining entry when
+      // one is removed; mirror that for this session.
+      state.settings.lastRepository =
+        state.recentRepositoryEntries[0]?.path ?? null;
+      state.savedSettings = {
+        ...state.savedSettings,
+        recentRepositories: [...state.settings.recentRepositories],
+        lastRepository: state.settings.lastRepository,
+      };
+    },
+    getLimit: recentRepositoryLimit,
+    isFeatureOn: featureOn,
+    activateRepository,
+    removeRecentRepository: (path) => api.removeRecentRepository(path),
+    setStatus,
+    elements: {
+      sidebar: els.repositoryList,
+      welcome: els.welcomeRepositories,
+      settings: els.settingsRepositoriesList,
+    },
+  });
 }
 
-async function switchToSavedRepository(entry) {
-  if (!entry?.exists) {
-    setStatus(`The repository at ${entry?.path ?? "that path"} is missing.`);
-    return;
-  }
-  if (repositories?.configured && typeof repositories.switchTo === "function") {
-    await repositories.switchTo(entry.path);
-    return;
-  }
-  setStatus("Switching saved repositories arrives in a later update.");
-}
-
-async function removeSavedRepository(entry) {
-  if (repositoryIsActive(entry)) {
-    setStatus("Switch to another repository before removing this one.");
-    return;
-  }
-  if (
-    !featureOn("recentRepositories") ||
-    !featureOn("recentRepositories.removeAction")
-  ) {
-    return;
-  }
-  if (repositories?.configured && typeof repositories.removeRecent === "function") {
-    await repositories.removeRecent(entry.path);
-    return;
-  }
-  setStatus("Removing saved repositories arrives in a later update.");
-}
-
-function makeRepositoryListItem(entry, { settings = false } = {}) {
-  const li = document.createElement("li");
-  const active = repositoryIsActive(entry);
-  if (active) li.classList.add("active");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "repository-entry";
-  button.title = entry.path;
-  button.disabled = !entry.exists;
-  if (active) button.classList.add("active");
-  const name = document.createElement("span");
-  name.className = "repository-name";
-  name.textContent = entry.name;
-  const path = document.createElement("span");
-  path.className = "repository-path";
-  path.textContent = entry.path;
-  if (!entry.exists) {
-    const missing = document.createElement("span");
-    missing.className = "repository-missing";
-    missing.textContent = "Missing";
-    button.append(name, missing, path);
-  } else {
-    button.append(name, path);
-  }
-  if (settings) {
-    const meta = document.createElement("span");
-    meta.className = "repository-meta";
-    meta.append(name.cloneNode(true), path.cloneNode(true));
-    if (!entry.exists) {
-      const missing = document.createElement("span");
-      missing.className = "repository-missing";
-      missing.textContent = "Missing";
-      meta.append(missing);
-    }
-    li.append(meta);
-    if (active) {
-      const badge = document.createElement("span");
-      badge.className = "repository-active";
-      badge.textContent = "Active";
-      li.append(badge);
-    }
-  } else {
-    button.addEventListener("click", () => switchToSavedRepository(entry));
-    li.append(button);
-  }
-
-  if (!active) {
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "repository-remove";
-    remove.textContent = "×";
-    remove.title = `Remove ${entry.name} from saved repositories`;
-    remove.setAttribute("aria-label", `Remove ${entry.name} from saved repositories`);
-    remove.dataset.feature =
-      "recentRepositories recentRepositories.removeAction";
-    remove.hidden =
-      !featureOn("recentRepositories") ||
-      !featureOn("recentRepositories.removeAction");
-    remove.addEventListener("click", (event) => {
-      event.stopPropagation();
-      removeSavedRepository(entry);
-    });
-    li.append(remove);
-  }
-  return li;
-}
-
-/** Sidebar and welcome-screen repositories. Repositories is a v1.2 stub. */
+/** Sidebar and welcome-screen repositories. */
 function renderRepositorySkeletons() {
-  const entries = savedRepositoryEntries();
-  for (const element of [els.welcomeRepositories]) {
-    if (!element) continue;
-    element.textContent = "";
-    for (const entry of entries) {
-      element.append(makeRepositoryListItem(entry));
-    }
-  }
-  if (els.repositoryList) {
-    els.repositoryList.textContent = "";
-    for (const entry of entries) {
-      els.repositoryList.append(makeRepositoryListItem(entry));
-    }
-    if (!entries.length) {
-      const li = document.createElement("li");
-      li.className = "empty";
-      li.textContent = "No saved repositories yet.";
-      els.repositoryList.append(li);
-    }
-  }
+  repositories.renderSidebar();
+  repositories.renderWelcome();
 }
 
 function renderSettingsRepositories() {
-  const list = els.settingsRepositoriesList;
-  if (!list) return;
-  list.textContent = "";
-  const entries = savedRepositoryEntries();
-  if (!entries.length) {
-    const li = document.createElement("li");
-    li.className = "empty";
-    li.textContent = "No saved repositories yet.";
-    list.append(li);
-    return;
-  }
-  for (const entry of entries) {
-    list.append(makeRepositoryListItem(entry, { settings: true }));
-  }
+  repositories.renderSettingsList();
 }
 
 function renderShortList(element, paths, emptyText, source) {
@@ -3385,16 +3331,23 @@ async function clearRecentRepositories() {
     setStatus("There are no saved repositories to clear.");
     return;
   }
+  const removable = state.recentRepositoryEntries.filter(
+    (entry) => !repositoryEntryIsActive(entry, state.repository)
+  );
+  if (!removable.length) {
+    setStatus(
+      state.repository
+        ? "Only the active repository is saved; there is nothing to clear."
+        : "There are no saved repositories to clear."
+    );
+    return;
+  }
   const confirmed = await confirmDialog(
-    "Clear the saved repository list? Files on disk are never deleted.",
+    "Clear saved repositories? Every saved repository except the active one is removed from this list. Files on disk are never deleted.",
     { title: "Clear recent repositories", kind: "warning" }
   );
   if (!confirmed) return;
-  if (repositories?.configured && typeof repositories.clearRecent === "function") {
-    await repositories.clearRecent();
-    return;
-  }
-  setStatus("Clearing saved repositories arrives in a later update.");
+  await repositories.clearRecent();
 }
 
 async function rebuildSearchIndex() {
@@ -4028,6 +3981,7 @@ async function readDiskText(path) {
 }
 
 async function init() {
+  configureRepositoryService();
   wireEvents();
   state.zoom = loadZoom();
   applyTheme();

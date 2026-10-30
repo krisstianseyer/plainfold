@@ -486,7 +486,7 @@
                 <input id="setting-recent-repository-limit" type="number" min="1" max="20" step="1" />
                 <p class="settings-help">Most recent first, from 1 to 20.</p>
               </div>
-              <div class="settings-field" data-settings-label="Saved repositories" data-settings-help="Repositories remembered by Plainfold. Switch between them from the sidebar.">
+              <div class="settings-field" data-feature="recentRepositories" data-settings-label="Saved repositories" data-settings-help="Repositories remembered by Plainfold. Switch between them from the sidebar.">
                 <span class="settings-label">Saved repositories</span>
                 <ul id="settings-repositories-list" class="settings-repository-list"></ul>
                 <p class="settings-help">The active repository cannot be removed. Removing an entry never deletes files.</p>
@@ -537,11 +537,12 @@
                 </div>
                 <p class="settings-help">Disabled when no repository is open. Nothing on disk is changed.</p>
               </div>
-              <div class="settings-field" data-settings-label="Clear recent repositories" data-settings-help="Remove the saved repository list. Files on disk are never deleted.">
+              <div class="settings-field" data-settings-label="Clear recent repositories" data-settings-help="Remove every saved repository except the active one. Files on disk are never deleted.">
                 <span class="settings-label">Recent repositories</span>
                 <div class="inline-field">
                   <button id="maintenance-clear-recents" class="button" type="button">Clear recent repositories</button>
                 </div>
+                <p class="settings-help">Removes saved list entries only. The active repository stays saved and no files on disk are deleted.</p>
               </div>
               <div class="settings-field" data-settings-label="Reset all settings" data-settings-help="Restore every setting and all feature switches to their defaults.">
                 <span class="settings-label">Reset</span>
