@@ -89,8 +89,19 @@ fn forget_repository(settings: &mut Settings, path: &str) -> bool {
     settings
         .recent_repositories
         .retain(|existing| !same_path(existing, path));
-    settings.last_repository = settings.recent_repositories.first().cloned();
-    before != settings.recent_repositories.len()
+    if before == settings.recent_repositories.len() {
+        return false;
+    }
+    // Only the last-opened pointer needs to move, and only when it pointed at
+    // the entry that was just removed.
+    if settings
+        .last_repository
+        .as_deref()
+        .is_some_and(|last| same_path(last, path))
+    {
+        settings.last_repository = settings.recent_repositories.first().cloned();
+    }
+    true
 }
 
 #[cfg(windows)]
@@ -240,6 +251,13 @@ fn open_repository_impl(
     };
 
     let settings_path = state.settings_path();
+    // Hold the settings write lock across the in-memory update and the atomic
+    // save so a concurrent settings save or removal cannot overwrite this
+    // newer repository list with an older snapshot.
+    let settings_write = state
+        .settings_write
+        .lock()
+        .map_err(|_| "Plainfold could not save its settings.".to_string())?;
     let (settings_snapshot, tree) = {
         let mut inner = state
             .inner
@@ -264,7 +282,9 @@ fn open_repository_impl(
 
     // Saving is best-effort: losing the recent list must never stop the
     // repository from opening.
-    if settings::save(&settings_path, &settings_snapshot).is_err() {
+    let save_result = settings::save(&settings_path, &settings_snapshot);
+    drop(settings_write);
+    if save_result.is_err() {
         notices.push(
             "The repository opened, but its recent-repositories list could not be saved."
                 .to_string(),
@@ -890,6 +910,10 @@ pub fn resolve_desktop_shortcut(
     state: State<'_, Arc<AppState>>,
     create: bool,
 ) -> Result<DesktopShortcutStatus, String> {
+    let _settings_write = state
+        .settings_write
+        .lock()
+        .map_err(|_| "Plainfold could not save its settings.".to_string())?;
     let mut inner = state
         .inner
         .lock()
@@ -1156,29 +1180,44 @@ pub fn save_settings(
     state: State<'_, Arc<AppState>>,
     settings: Settings,
 ) -> Result<Settings, String> {
+    let settings_write = state
+        .settings_write
+        .lock()
+        .map_err(|_| "Plainfold could not save its settings.".to_string())?;
     let mut settings = settings.sanitize();
+    let current_default = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        inner.settings.default_repository.clone()
+    };
+    // Validate only a newly chosen startup repository. A stored folder that
+    // later went missing must not block every unrelated settings save.
     if let Some(default_repository) = settings.default_repository.clone() {
-        let path = PathBuf::from(default_repository);
-        match Repository::open(&path) {
-            Ok(repository) => {
-                settings.default_repository =
-                    Some(repository.root().to_string_lossy().to_string());
-            }
-            Err(_) => {
-                return Err("The default repository folder could not be opened.".to_string());
+        if Some(&default_repository) != current_default.as_ref() {
+            let path = PathBuf::from(default_repository);
+            match Repository::open(&path) {
+                Ok(repository) => {
+                    settings.default_repository =
+                        Some(repository.root().to_string_lossy().to_string());
+                }
+                Err(_) => {
+                    return Err("The default repository folder could not be opened.".to_string());
+                }
             }
         }
     }
     // The list and the last opened repository are server-managed; a settings
     // save must never erase them with whatever the front end sent.
-    {
+    let current = {
         let inner = state
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
-        settings.recent_repositories = inner.settings.recent_repositories.clone();
-        settings.last_repository = inner.settings.last_repository.clone();
-    }
+        inner.settings.clone()
+    };
+    settings = settings::preserve_server_managed(settings, &current);
 
     settings::save(&state.settings_path(), &settings).map_err(|error| error.to_string())?;
     let mut inner = state
@@ -1186,6 +1225,7 @@ pub fn save_settings(
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
     inner.settings = settings.clone();
+    drop(settings_write);
     Ok(settings)
 }
 
@@ -1194,8 +1234,12 @@ pub fn remove_recent_repository(
     state: State<'_, Arc<AppState>>,
     path: String,
 ) -> Result<Vec<RepositoryEntry>, String> {
-    let (settings_snapshot, settings_path) = {
-        let mut inner = state
+    let settings_write = state
+        .settings_write
+        .lock()
+        .map_err(|_| "Plainfold could not save its settings.".to_string())?;
+    let mut updated = {
+        let inner = state
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
@@ -1207,12 +1251,20 @@ pub fn remove_recent_repository(
                 );
             }
         }
-        forget_repository(&mut inner.settings, &path);
-        (inner.settings.clone(), state.settings_path())
+        inner.settings.clone()
     };
+    forget_repository(&mut updated, &path);
 
-    settings::save(&settings_path, &settings_snapshot).map_err(|error| error.to_string())?;
-    Ok(recent_entries(&settings_snapshot))
+    settings::save(&state.settings_path(), &updated).map_err(|error| error.to_string())?;
+    {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        inner.settings = updated.clone();
+    }
+    drop(settings_write);
+    Ok(recent_entries(&updated))
 }
 
 #[cfg(test)]
@@ -1317,6 +1369,19 @@ mod tests {
         assert_eq!(settings.last_repository, None);
 
         assert!(!forget_repository(&mut settings, "C:/missing"));
+    }
+
+    #[test]
+    fn removing_an_unrelated_repository_keeps_the_last_pointer() {
+        let mut settings = Settings {
+            recent_repositories: vec!["C:/one".into(), "C:/two".into()],
+            last_repository: Some("C:/two".into()),
+            ..Settings::default()
+        };
+
+        assert!(forget_repository(&mut settings, "C:/one"));
+        assert_eq!(settings.recent_repositories, vec!["C:/two".to_string()]);
+        assert_eq!(settings.last_repository.as_deref(), Some("C:/two"));
     }
 
     #[test]

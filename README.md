@@ -24,7 +24,7 @@ The v1 feature set in `instructions.md` is implemented:
 - Repository tree filter for partial names, paths, or extensions, with `*` and `?` wildcards; matching folders keep their contents visible.
 - Resizable sidebar pane; drag the divider, use arrow keys, or double-click to reset.
 - Plain-text links: `[[repository-relative/path]]`; Ctrl+click (Cmd+click on macOS) opens the linked file.
-- App version under the Plainfold wordmark, a GitHub repository placeholder in the centre of the status bar, repository folder/file counts on the left, and words, characters, and size of the open file on the right.
+- App version and GitHub repository placeholder in the About popover, repository folder/file counts on the left, and words, characters, and size of the open file on the right.
 - No framework on the front end; CodeMirror is the only editor dependency.
 
 Version 1.2.0 adds:

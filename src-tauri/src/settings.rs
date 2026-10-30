@@ -10,6 +10,7 @@ use crate::revisions::Retention;
 const MAX_DISABLED_FEATURES: usize = 200;
 const MAX_FEATURE_ID_CHARS: usize = 80;
 const MAX_RECENT_REPOSITORIES: usize = 20;
+const DEFAULT_RECENT_REPOSITORY_LIMIT: u32 = 8;
 const MIN_RECENT_REPOSITORY_LIMIT: u32 = 1;
 const MAX_RECENT_REPOSITORY_LIMIT: u32 = 20;
 
@@ -40,8 +41,12 @@ pub struct Settings {
     pub recent_repositories: Vec<String>,
     #[serde(default)]
     pub last_repository: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_recent_repository_limit")]
     pub recent_repository_limit: u32,
+}
+
+fn default_recent_repository_limit() -> u32 {
+    DEFAULT_RECENT_REPOSITORY_LIMIT
 }
 
 impl Default for Settings {
@@ -67,7 +72,7 @@ impl Default for Settings {
             disabled_features: Vec::new(),
             recent_repositories: Vec::new(),
             last_repository: None,
-            recent_repository_limit: 8,
+            recent_repository_limit: default_recent_repository_limit(),
         }
     }
 }
@@ -218,6 +223,15 @@ pub fn load(path: &Path) -> LoadedSettings {
     }
 }
 
+/// Keep the fields the backend manages even when a settings save carries old
+/// values. This is what makes a front-end settings save unable to erase the
+/// saved repository list or the last-opened pointer.
+pub fn preserve_server_managed(mut settings: Settings, current: &Settings) -> Settings {
+    settings.recent_repositories = current.recent_repositories.clone();
+    settings.last_repository = current.last_repository.clone();
+    settings
+}
+
 pub fn save(path: &Path, settings: &Settings) -> AppResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -243,6 +257,42 @@ pub fn settings_path(config_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_settings_without_recent_limit_keep_the_eight_entry_default() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("recentRepositoryLimit");
+        let loaded: Settings = serde_json::from_value(value).unwrap();
+
+        assert_eq!(loaded.sanitize().recent_repository_limit, 8);
+    }
+
+    #[test]
+    fn preserve_server_managed_ignores_incoming_repository_fields() {
+        let current = Settings {
+            recent_repositories: vec!["C:\\Current".into()],
+            last_repository: Some("C:\\Current".into()),
+            ..Settings::default()
+        };
+        let incoming = Settings {
+            theme: "dark".into(),
+            recent_repositories: vec![],
+            last_repository: Some("C:\\Stale".into()),
+            ..Settings::default()
+        }
+        .sanitize();
+
+        let preserved = preserve_server_managed(incoming, &current);
+        assert_eq!(preserved.theme, "dark");
+        assert_eq!(
+            preserved.recent_repositories,
+            vec!["C:\\Current".to_string()]
+        );
+        assert_eq!(preserved.last_repository.as_deref(), Some("C:\\Current"));
+    }
 
     #[test]
     fn missing_file_gives_defaults_without_notice() {

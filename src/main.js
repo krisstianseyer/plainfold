@@ -19,6 +19,7 @@ import {
   reconcileRepositoryEntries,
   repositories,
   repositoryEntryIsActive,
+  repositoryLastAfterRemoval,
 } from "./repositories.js";
 import {
   UPDATE_OWNER,
@@ -29,6 +30,7 @@ import {
   isUpdateDismissed,
   maybeCheckForUpdate,
   readLastChecked,
+  recordUpdateCheck,
   updateInactiveStatus,
   updateSourceConfigured,
   updateSourceLabel,
@@ -324,8 +326,21 @@ function applyFeatureVisibility() {
       element.blur?.();
     }
   }
-  if (!featureOn("search") || !featureOn("search.results")) hideResults();
+  if (
+    !featureOn("search") ||
+    !featureOn("search.toolbar") ||
+    !featureOn("search.results")
+  ) {
+    hideResults();
+  }
   if (!featureOn("about") || !featureOn("about.brand")) hideBrandPopover();
+  if (!featureOn("tags") || !featureOn("tags.filterBar")) {
+    state.tagFilter = null;
+  }
+  if (!featureOn("treeFilter") || !featureOn("treeFilter.input")) {
+    state.fileFilter = "";
+    if (els.treeFilter) els.treeFilter.value = "";
+  }
   state.editor?.setSyntaxHighlighting?.(featureOn("syntaxHighlighting.editor"));
   if (!featureOn("autosave") || !featureOn("autosave.engine")) clearAutosave();
   updateStatusLeft();
@@ -335,6 +350,8 @@ function applyFeatureVisibility() {
     els.statusRight.textContent = "";
   }
   updateControls();
+  renderTagFilter();
+  renderTree();
   if (els.settingsDialog?.open) {
     const panels = settingsPanels();
     const active = panels.find(
@@ -347,6 +364,7 @@ function applyFeatureVisibility() {
       if (fallback) activateSettingsSection(fallback.dataset.settingsPanel);
     }
     updateSettingsPanelVisibility();
+    applySettingsSearch();
   }
 }
 
@@ -670,6 +688,11 @@ function updateControls() {
   if (els.searchRescan) {
     els.searchRescan.disabled = !hasRepository;
   }
+  if (els.maintenanceClearRecents) {
+    els.maintenanceClearRecents.disabled =
+      !featureOn("recentRepositories") ||
+      !featureOn("recentRepositories.removeAction");
+  }
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   els.tree.classList.toggle("filtered", filtered);
   if (!hasRepository) {
@@ -679,6 +702,8 @@ function updateControls() {
     els.emptyCopy.textContent =
       "Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.";
     els.emptyOpen.textContent = "Open a folder";
+    els.emptyOpen.disabled = false;
+    els.emptyOpen.title = "";
   } else if (!hasFile) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
@@ -686,6 +711,15 @@ function updateControls() {
     els.emptyCopy.textContent =
       "Select a file in the repository, or create one. Files are opened as plain text, never rendered.";
     els.emptyOpen.textContent = "New file";
+    const canCreateEmpty = featureOn("createDelete") && featureOn("createDelete.emptyNewFile");
+    els.emptyOpen.disabled = !canCreateEmpty;
+    els.emptyOpen.title = canCreateEmpty
+      ? "Create a file in the selected folder"
+      : "New file is turned off. It can be restored under Settings > Features.";
+  } else {
+    els.emptyState.hidden = true;
+    els.emptyOpen.disabled = false;
+    els.emptyOpen.title = "";
   }
 }
 
@@ -726,6 +760,17 @@ async function chooseRepository() {
 }
 
 async function activateRepository(path, { checkPending = true } = {}) {
+  try {
+    // Never let a repository change overtake an in-flight settings save.
+    if (!(await flushSettingsSave())) {
+      setStatus("Settings could not be saved, so the repository was not changed.");
+      return false;
+    }
+  } catch (error) {
+    setStatus(errText(error));
+    setNotice(errText(error), "warn");
+    return false;
+  }
   if (checkPending) {
     try {
       // Switching repositories discards the open editor, so use the same
@@ -924,17 +969,20 @@ function configureRepositoryService() {
     getState: () => state,
     getEntries: () => state.recentRepositoryEntries,
     getSavedEntries: savedRepositoryEntries,
-    setEntries: (entries) => {
+    setEntries: (entries, { removedPath } = {}) => {
       state.recentRepositoryEntries = normalizeRepositoryEntries(entries);
       // Settings persistence keeps a plain path list; rendering uses the rich
       // entries above.
       state.settings.recentRepositories = state.recentRepositoryEntries.map(
         (entry) => entry.path
       );
-      // The backend points lastRepository at the newest remaining entry when
-      // one is removed; mirror that for this session.
-      state.settings.lastRepository =
-        state.recentRepositoryEntries[0]?.path ?? null;
+      // Mirror the backend: only move the last-opened pointer when the entry
+      // it pointed at was the one removed.
+      state.settings.lastRepository = repositoryLastAfterRemoval(
+        state.recentRepositoryEntries,
+        state.settings.lastRepository,
+        removedPath
+      );
       state.savedSettings = {
         ...state.savedSettings,
         recentRepositories: [...state.settings.recentRepositories],
@@ -944,7 +992,17 @@ function configureRepositoryService() {
     getLimit: recentRepositoryLimit,
     isFeatureOn: featureOn,
     activateRepository,
-    removeRecentRepository: (path) => api.removeRecentRepository(path),
+    removeRecentRepository: async (path) => {
+      // Settings and saved-repository writes share settings.json. Flush the
+      // settings chain first so the removal cannot be overwritten by an older
+      // settings snapshot.
+      if (!(await flushSettingsSave())) {
+        throw new Error(
+          "Settings could not be saved, so the saved repository was not removed."
+        );
+      }
+      return api.removeRecentRepository(path);
+    },
     setStatus,
     elements: {
       sidebar: els.repositoryList,
@@ -1186,6 +1244,9 @@ function handleTreeKeydown(event) {
 }
 
 function renderNodes(nodes, depth, filtered) {
+  const canDragReorder = featureOn("sortAndOrder.dragReorder");
+  const canDragMove = featureOn("sortAndOrder.dragMove");
+  const canDrag = canDragReorder || canDragMove;
   for (const node of nodes) {
     const row = document.createElement("div");
     row.className = "tree-row";
@@ -1196,8 +1257,7 @@ function renderNodes(nodes, depth, filtered) {
     row.dataset.name = node.name;
     row.style.paddingLeft = `${depth * 14}px`;
     if (state.selected === node.path) row.classList.add("selected");
-    row.draggable =
-      !filtered && featureOn("sortAndOrder") && featureOn("sortAndOrder.dragReorder");
+    row.draggable = !filtered && canDrag;
 
     const disclosure = document.createElement("span");
     disclosure.className = "tree-disclosure";
@@ -1266,13 +1326,7 @@ function renderNodes(nodes, depth, filtered) {
       showContextMenu(event.clientX, event.clientY, node);
     });
     row.addEventListener("dragstart", (event) => {
-      if (
-        filtered ||
-        state.saving ||
-        state.moving ||
-        !featureOn("sortAndOrder") ||
-        !featureOn("sortAndOrder.dragReorder")
-      ) {
+      if (filtered || state.saving || state.moving || !canDrag) {
         event.preventDefault();
         return;
       }
@@ -1281,7 +1335,7 @@ function renderNodes(nodes, depth, filtered) {
         parent: parentOf(node.path),
         name: node.name,
       };
-      els.rootDropZone.hidden = !state.dragSource.parent;
+      els.rootDropZone.hidden = !state.dragSource.parent || !canDragMove;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", node.path);
       row.classList.add("dragging");
@@ -1306,19 +1360,24 @@ function renderNodes(nodes, depth, filtered) {
       const source = state.dragSource;
       if (!source || source.path === node.path) return;
       const sameParent = source.parent === parentOf(node.path);
+      const canReorderHere = sameParent && canDragReorder;
       const canMoveInto =
+        canDragMove &&
         node.isDir &&
         node.path !== source.parent &&
         !isPathWithin(node.path, source.path);
-      if (!sameParent && !canMoveInto) return;
+      if (!canReorderHere && !canMoveInto) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
       const rect = row.getBoundingClientRect();
       const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
-      const into = canMoveInto && (!sameParent || (ratio > 0.25 && ratio < 0.75));
+      const into =
+        canMoveInto &&
+        (!sameParent || !canDragReorder || (ratio > 0.25 && ratio < 0.75));
       row.classList.toggle("drop-target", !into);
       row.classList.toggle("drop-into", into);
-      row.dataset.dropMode = into ? "into" : "reorder";
+      row.dataset.dropMode =
+        into && canMoveInto ? "into" : canReorderHere ? "reorder" : "";
     });
     row.addEventListener("dragleave", () => {
       row.classList.remove("drop-target", "drop-into");
@@ -1329,8 +1388,11 @@ function renderNodes(nodes, depth, filtered) {
       const mode = row.dataset.dropMode;
       clearDrop();
       if (!source) return;
-      if (mode === "into") await movePath(source.path, node.path);
-      else await dropReorder(node, event);
+      if (mode === "into") {
+        if (canDragMove) await movePath(source.path, node.path);
+      } else if (mode === "reorder" && canDragReorder) {
+        await dropReorder(node, event);
+      }
     });
 
     row.append(disclosure, entry);
@@ -1386,7 +1448,7 @@ function siblingNodes(node) {
 }
 
 async function moveNode(node, delta) {
-  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
+  if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragReorder")) return;
   const parent = parentOf(node.path);
   const siblings = siblingNodes(node);
   const names = siblings.map((sibling) => sibling.name);
@@ -1486,6 +1548,8 @@ function showContextMenu(x, y, node, source = null) {
       if (node.path.includes("/")) {
         add("Move to repository root", () => movePath(node.path, ""));
       }
+    }
+    if (can("sortAndOrder.dragReorder")) {
       const siblings = siblingNodes(node);
       const index = siblings.findIndex((sibling) => sibling.path === node.path);
       add("Move up", () => moveNode(node, -1), false, index <= 0);
@@ -1528,6 +1592,8 @@ function showContextMenu(x, y, node, source = null) {
       if (node.path.includes("/")) {
         add("Move to repository root", () => movePath(node.path, ""));
       }
+    }
+    if (can("sortAndOrder.dragReorder")) {
       const siblings = siblingNodes(node);
       const index = siblings.findIndex((sibling) => sibling.path === node.path);
       add("Move up", () => moveNode(node, -1), false, index <= 0);
@@ -1540,6 +1606,12 @@ function showContextMenu(x, y, node, source = null) {
       rule();
       add("Delete file…", () => deleteItem(node), true);
     }
+  }
+
+  if (!els.contextMenu.querySelector("button")) {
+    els.contextMenu.hidden = true;
+    els.contextMenu.textContent = "";
+    return;
   }
 
   els.contextMenu.hidden = false;
@@ -2011,8 +2083,8 @@ function mountFile(file, line = null) {
     onSave: saveCurrent,
     onSearch: focusSearch,
     onOpenLink: (path) => openFile(path),
-    onUndo: undo,
-    onRedo: redo,
+    onUndo: undoFromShortcut,
+    onRedo: redoFromShortcut,
   });
   if (line) state.editor.openAtLine(line);
   else state.editor.focus();
@@ -2191,6 +2263,7 @@ function renderFileTags() {
     button.textContent = tag;
     button.title = `Filter the tree by ${tag}`;
     button.addEventListener("click", () => {
+      if (!featureOn("tags") || !featureOn("tags.filterBar")) return;
       state.tagFilter = tag;
       renderTagFilter();
       renderTree();
@@ -2284,6 +2357,23 @@ async function redo() {
   }
 }
 
+/** Editor shortcuts must not reach repository undo when that control is off. */
+function undoFromShortcut() {
+  if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
+    return false;
+  }
+  void undo();
+  return true;
+}
+
+function redoFromShortcut() {
+  if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
+    return false;
+  }
+  void redo();
+  return true;
+}
+
 /** Bring the tree, the open editor and the organization lists back in step
  *  with the repository after a step was undone or redone. */
 async function afterUndoStep(previousPath) {
@@ -2362,7 +2452,13 @@ function hideResults() {
 }
 
 async function runSearch() {
-  if (!featureOn("search")) return;
+  if (
+    !featureOn("search") ||
+    !featureOn("search.toolbar") ||
+    !featureOn("search.results")
+  ) {
+    return;
+  }
   const query = els.search.value.trim();
   if (!query) {
     hideResults();
@@ -2507,8 +2603,13 @@ async function saveLimitFromForm() {
     return;
   }
   const settings = { ...state.savedSettings, [key]: value };
+  const task = state.settingsSaveChain.then(
+    () => api.saveSettings(settings),
+    () => api.saveSettings(settings)
+  );
+  state.settingsSaveChain = task.catch(() => false);
   try {
-    const saved = await api.saveSettings(settings);
+    const saved = await task;
     els.limitDialog.close();
     const merged = mergeSettingsResponse(settings, saved);
     state.savedSettings = merged;
@@ -2542,6 +2643,13 @@ const SETTING_ELEMENT_IDS = {
   defaultSort: "setting-sort",
   recentRepositoryLimit: "setting-recent-repository-limit",
 };
+
+const SETTING_KEYS_BY_ELEMENT_ID = Object.freeze({
+  ...Object.fromEntries(
+    Object.entries(SETTING_ELEMENT_IDS).map(([key, id]) => [id, key])
+  ),
+  "setting-default-repository": "defaultRepository",
+});
 
 const SETTINGS_SECTIONS = {
   appearance: {
@@ -2850,9 +2958,11 @@ function renderFeatures() {
       wrapper.className = "feature-group";
       wrapper.dataset.featureGroup = group.id;
       wrapper.dataset.featureSearch = [
+        group.id,
         group.label,
         group.description,
         ...group.controls.flatMap((control) => [
+          control.id,
           control.label,
           control.description,
         ]),
@@ -2997,10 +3107,12 @@ function updateSettingsPanelVisibility() {
 
 function settingFieldSearchText(field) {
   const input = field.querySelector("input, select, textarea");
+  const key = SETTING_KEYS_BY_ELEMENT_ID[input?.id] ?? "";
   return [
     field.dataset.settingsLabel ?? "",
     field.dataset.settingsHelp ?? "",
     input?.id ?? "",
+    key,
     field.textContent ?? "",
   ]
     .join(" ")
@@ -3046,6 +3158,12 @@ function applySettingsSearch() {
     );
     let visibleFields = 0;
     for (const field of panel.querySelectorAll(".settings-field")) {
+      if (field.closest(".feature-off")) {
+        // The feature itself hides this field; leave its own search state
+        // untouched so it can show again when the feature is restored.
+        field.hidden = false;
+        continue;
+      }
       const match =
         !query || categoryMatch || settingFieldSearchText(field).includes(query);
       field.hidden = !match;
@@ -3193,10 +3311,29 @@ function scheduleSettingsSave() {
 function flushSettingsSave() {
   clearTimeout(state.settingsSaveTimer);
   state.settingsSaveTimer = null;
-  if (state.settingsDirty) return saveSettingsNow();
-  return state.settingsSaveChain.then(
-    (result) => result !== false && !state.settingsSaveFailed
-  );
+
+  const finish = async () => {
+    // A change made while the previous request was in flight leaves
+    // settingsDirty true. Keep saving until the form and disk agree so closing
+    // the dialog cannot drop the newest edit.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      clearTimeout(state.settingsSaveTimer);
+      state.settingsSaveTimer = null;
+      if (!state.settingsDirty) break;
+      const saved = await saveSettingsNow();
+      if (!saved) return false;
+    }
+    await state.settingsSaveChain;
+    if (state.settingsDirty) {
+      showSettingsError(
+        "Settings are still changing and could not be saved yet. Please close again."
+      );
+      return false;
+    }
+    return !state.settingsSaveFailed;
+  };
+
+  return finish();
 }
 
 /**
@@ -3239,6 +3376,7 @@ function saveSettingsNow() {
           state.settingsDraftFeatures = pendingDraft;
           state.settings.disabledFeatures = [...pendingDraft];
           applyFeatureVisibility();
+          syncFeatureSwitches();
         }
       }
       state.settingsSaveFailed = false;
@@ -3267,7 +3405,7 @@ async function closeSettings() {
   state.settingsClosing = true;
   try {
     const ok = await flushSettingsSave();
-    if (!ok && state.settingsSaveFailed) return;
+    if (!ok) return;
     els.settingsDialog.close();
   } finally {
     state.settingsClosing = false;
@@ -3316,6 +3454,7 @@ async function resetAllSettings() {
   state.settingsDraftRepository = null;
   state.settingsDraftFeatures = new Set();
   state.settings.disabledFeatures = [];
+  state.settings.desktopShortcutPrompted = DEFAULT_SETTINGS.desktopShortcutPrompted;
   state.zoom = null;
   applyZoom();
   saveZoom();
@@ -3331,10 +3470,18 @@ async function resetAllSettings() {
   renderFeatures();
   renderUpdateAutoCheckSwitch();
   refreshSettingsDynamic();
+  applySettingsSearch();
   saveSettingsNow();
 }
 
 async function clearRecentRepositories() {
+  if (
+    !featureOn("recentRepositories") ||
+    !featureOn("recentRepositories.removeAction")
+  ) {
+    setStatus("Removing saved repositories is turned off.");
+    return;
+  }
   if (!savedRepositoryEntries().length) {
     setStatus("There are no saved repositories to clear.");
     return;
@@ -3444,7 +3591,12 @@ function applyUpdateResult(result) {
  * for 24 hours, and deliberately not awaited so startup is never blocked.
  */
 async function runLaunchUpdateCheck() {
-  if (!featureOn("updates") || !featureOn("updates.autoCheck")) return;
+  if (!featureOn("updates")) return;
+  if (!featureOn("updates.autoCheck")) {
+    state.updateInfo.status = "Automatic update checks are off.";
+    refreshSettingsDynamic();
+    return;
+  }
   if (!updateSourceConfigured()) {
     state.updateInfo.status = updateInactiveStatus();
     refreshSettingsDynamic();
@@ -3485,6 +3637,7 @@ async function checkUpdatesNow() {
   refreshSettingsDynamic();
   try {
     const result = await checkForUpdate({ currentVersion: state.version });
+    if (result.configured) recordUpdateCheck(result.checkedAt);
     applyUpdateResult(result);
   } catch (error) {
     state.updateInfo = {
@@ -3573,6 +3726,8 @@ function wireRootDrop(element) {
   element.addEventListener("dragover", (event) => {
     if (
       !state.dragSource?.parent ||
+      !featureOn("sortAndOrder") ||
+      !featureOn("sortAndOrder.dragMove") ||
       event.target.closest?.(".tree-row")
     ) {
       return;
@@ -3586,6 +3741,7 @@ function wireRootDrop(element) {
   });
   element.addEventListener("drop", async (event) => {
     if (event.target.closest?.(".tree-row")) return;
+    if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
     event.preventDefault();
     const source = state.dragSource;
     element.classList.remove("drop-root");
@@ -3722,6 +3878,7 @@ function wireEvents() {
   });
 
   els.settingsButton.addEventListener("click", openSettings);
+  els.settingsClose.addEventListener("click", closeSettings);
   wireSettingsDialog();
   els.pinnedTitle.addEventListener("click", () => openLimitDialog("pinned"));
   els.recentTitle.addEventListener("click", () => openLimitDialog("recent"));
@@ -3918,6 +4075,8 @@ function wireEvents() {
       // The editor handles its own history first and only lets this run once
       // that history is empty, so repository steps are undone from anywhere.
       const typing =
+        els.settingsDialog?.open ||
+        els.limitDialog?.open ||
         els.treeFilter === document.activeElement ||
         els.search === document.activeElement ||
         els.promptInput === document.activeElement ||
@@ -3931,8 +4090,12 @@ function wireEvents() {
       else undo();
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
       const typing =
+        els.settingsDialog?.open ||
+        els.limitDialog?.open ||
         els.treeFilter === document.activeElement ||
-        els.search === document.activeElement;
+        els.search === document.activeElement ||
+        els.promptInput === document.activeElement ||
+        els.tagsInput === document.activeElement;
       if (typing) return;
       event.preventDefault();
       if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
@@ -4018,7 +4181,6 @@ function wireEvents() {
     const paths = event.payload?.paths ?? [];
     await loadTree();
     await refreshOrganization();
-    if (!featureOn("watcher.autoReload")) return;
     if (state.moving || !state.currentFile) return;
     const current = state.currentFile.path;
     const affected = paths.some(
@@ -4041,6 +4203,7 @@ function wireEvents() {
     }
 
     const showNotice = featureOn("watcher.notice");
+    const autoReload = featureOn("watcher.autoReload");
     if (state.dirty) {
       // Pausing again is idempotent; only warn when the message is not
       // already on screen, so a dismissed warning stays dismissed.
@@ -4051,11 +4214,18 @@ function wireEvents() {
       if (showNotice && (els.notice.hidden || els.noticeText.textContent !== warning)) {
         setNotice(warning, "warn");
       }
-    } else {
+    } else if (autoReload) {
       await reloadCurrent(true);
       if (showNotice) {
         setNotice("This file changed on disk and was reloaded.", "info");
       }
+    } else if (showNotice) {
+      // Auto-reload and the notice are independent controls: no file is
+      // changing on screen here, but the user still needs to know it is stale.
+      setNotice(
+        "This file changed on disk. Automatic reload is turned off, so the open copy was kept.",
+        "info"
+      );
     }
   }).catch(() => {});
 }

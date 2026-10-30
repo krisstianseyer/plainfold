@@ -13,6 +13,7 @@ import {
   repositories,
   repositoryEntryIsActive,
   repositoryFallbackName,
+  repositoryLastAfterRemoval,
   sameRepositoryPath,
 } from "../../src/repositories.js";
 
@@ -183,6 +184,20 @@ test("removableRepositoryEntries keeps the active entry", () => {
   assert.deepEqual(removableRepositoryEntries(undefined, null), []);
 });
 
+test("repositoryLastAfterRemoval only moves when the last-opened entry goes", () => {
+  const remaining = normalizeRepositoryEntries([{ path: "C:\\Two" }]);
+  assert.equal(
+    repositoryLastAfterRemoval(remaining, "C:\\Two", "C:\\One"),
+    "C:\\Two"
+  );
+  assert.equal(
+    repositoryLastAfterRemoval(remaining, "C:\\One", "C:\\One"),
+    "C:\\Two"
+  );
+  assert.equal(repositoryLastAfterRemoval([], "C:\\One", "C:\\One"), null);
+  assert.equal(repositoryLastAfterRemoval(remaining, null, "C:\\One"), null);
+});
+
 test("reconcileRepositoryEntries keeps metadata for paths still saved", () => {
   const previous = normalizeRepositoryEntries([
     { path: "C:\\One", name: "One", exists: false },
@@ -219,7 +234,10 @@ test("reconcileRepositoryEntries drops removed entries and dedupes paths", () =>
 /* The service takes callbacks, so its removal/clear flow is testable without
    a DOM: rendering helpers simply no-op when no elements are configured. */
 
-function wireTestService(initialEntries, { activePath = "C:\\One" } = {}) {
+function wireTestService(
+  initialEntries,
+  { activePath = "C:\\One", featuresOn = () => true } = {}
+) {
   let entries = normalizeRepositoryEntries(initialEntries);
   let active = activePath
     ? { path: activePath, name: repositoryFallbackName(activePath) }
@@ -233,7 +251,7 @@ function wireTestService(initialEntries, { activePath = "C:\\One" } = {}) {
       entries = next;
     },
     getLimit: () => 20,
-    isFeatureOn: () => true,
+    isFeatureOn: featuresOn,
     activateRepository: async (path) => {
       calls.activated.push(path);
       active = { path, name: repositoryFallbackName(path) };
@@ -313,6 +331,19 @@ test("clearRecent removes all entries when no repository is active", async () =>
   assert.deepEqual(harness.calls.removed, ["C:\\One", "C:\\Two"]);
   assert.deepEqual(harness.entries(), []);
   assert.match(harness.calls.statuses.at(-1), /Cleared 2/);
+});
+
+test("clearRecent is inert when saved-repository removal is turned off", async () => {
+  const harness = wireTestService(
+    [
+      { path: "C:\\One", name: "One", exists: true },
+      { path: "C:\\Two", name: "Two", exists: true },
+    ],
+    { featuresOn: (id) => id !== "recentRepositories.removeAction" }
+  );
+  assert.equal(await repositories.clearRecent(), false);
+  assert.deepEqual(harness.calls.removed, []);
+  assert.equal(harness.entries().length, 2);
 });
 
 test("switching a missing entry only reports a status", async () => {

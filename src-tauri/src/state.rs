@@ -21,6 +21,10 @@ pub struct Inner {
 
 pub struct AppState {
     pub inner: Mutex<Inner>,
+    /// Serializes every read/merge/mutate/save cycle for settings.json so a
+    /// repository open, removal, or settings save cannot write an older
+    /// snapshot over a newer one.
+    pub settings_write: Mutex<()>,
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
 }
@@ -39,6 +43,7 @@ impl AppState {
                 undo: History::default(),
                 undo_backup_dir: None,
             }),
+            settings_write: Mutex::new(()),
             config_dir,
             data_dir,
         }

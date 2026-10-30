@@ -135,7 +135,8 @@ export const FEATURE_GROUPS = [
   {
     id: "watcher",
     label: "External-change watcher",
-    description: "Reload files that change on disk and show a notice.",
+    description:
+      "Reload files that change on disk and show a notice. Turning this off stops the watcher the next time a repository is opened.",
     controls: [
       {
         id: "watcher.autoReload",

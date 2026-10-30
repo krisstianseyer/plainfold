@@ -135,6 +135,17 @@ export function removableRepositoryEntries(entries, repository) {
   );
 }
 
+/**
+ * The last-opened pointer after one entry is removed. It only moves when the
+ * removed entry was the last-opened one, matching the backend command.
+ */
+export function repositoryLastAfterRemoval(entries, lastPath, removedPath) {
+  if (!lastPath || !sameRepositoryPath(lastPath, removedPath)) {
+    return lastPath ?? null;
+  }
+  return normalizeRepositoryEntries(entries)[0]?.path ?? null;
+}
+
 function errorMessage(error, fallback) {
   if (typeof error === "string" && error) return error;
   if (error && typeof error.message === "string" && error.message) {
@@ -297,9 +308,9 @@ function nextFocusPath(entries, path) {
   return (entries[index + 1] ?? entries[index - 1])?.path ?? null;
 }
 
-function setEntries(entries) {
+function setEntries(entries, meta = {}) {
   const normalized = normalizeRepositoryEntries(entries);
-  dependencies?.setEntries?.(normalized);
+  dependencies?.setEntries?.(normalized, meta);
   return normalized;
 }
 
@@ -308,9 +319,12 @@ function setEntries(entries) {
  * backends that return only a boolean fall back to filtering the old list.
  */
 function applyRemovalResult(path, returned) {
-  if (Array.isArray(returned)) return setEntries(returned);
+  if (Array.isArray(returned)) {
+    return setEntries(returned, { removedPath: path });
+  }
   return setEntries(
-    allEntries().filter((entry) => !sameRepositoryPath(entry.path, path))
+    allEntries().filter((entry) => !sameRepositoryPath(entry.path, path)),
+    { removedPath: path }
   );
 }
 
@@ -475,6 +489,12 @@ export const repositories = {
    */
   async clearRecent() {
     if (!dependencies || busy) return false;
+    if (
+      !dependencies.isFeatureOn?.(REPOSITORY_FEATURE) ||
+      !dependencies.isFeatureOn?.(REPOSITORY_REMOVE_FEATURE)
+    ) {
+      return false;
+    }
     const active = activeRepository();
     const removable = removableRepositoryEntries(allEntries(), active);
     if (!removable.length) {

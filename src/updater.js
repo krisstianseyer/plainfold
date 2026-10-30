@@ -262,6 +262,14 @@ export async function checkForUpdate({
   }
 }
 
+/** Remember when a check finished, including a manual Settings check. */
+export function recordUpdateCheck(timestamp = Date.now()) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  safeStorageSet(UPDATE_LAST_CHECK_KEY, value);
+  return value;
+}
+
 /**
  * Launch check. Runs at most once per 24 hours using localStorage, and returns
  * null when it is skipped. The caller performs the feature guard and does not
@@ -289,7 +297,7 @@ export async function maybeCheckForUpdate({
     repo,
   });
   if (result.configured) {
-    safeStorageSet(UPDATE_LAST_CHECK_KEY, result.checkedAt ?? Date.now());
+    recordUpdateCheck(result.checkedAt ?? Date.now());
   }
   return result;
 }

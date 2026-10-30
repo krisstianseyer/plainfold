@@ -51,7 +51,7 @@ The Settings window has left category navigation. There is no Save/Cancel footer
 | Category | What it contains |
 |---|---|
 | Appearance | Theme, font family, font size, and reset editor zoom. Themes: Follow the system, Light, Dark, Sepia, Nord, Solarized Light, Solarized Dark, Midnight, Forest. |
-| Editor | Tab width, the wrap default and feature state, autosave, revision retention, and editor statistics. |
+| Editor | Tab width, autosave, revision retention, and editor statistics. |
 | Sidebar & Tree | Pinned and recent limits, default sort, tree filtering, sort and drag behavior, and create/delete. |
 | Search | Search feature state, index information, and Rebuild index. |
 | Repositories | Startup repository, an explanation of reopen-last behavior, the recent repository limit, and the saved repository list with remove controls. |

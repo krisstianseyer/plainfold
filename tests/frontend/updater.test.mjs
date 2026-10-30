@@ -12,6 +12,7 @@ import {
   maybeCheckForUpdate,
   readDismissedVersion,
   readLastChecked,
+  recordUpdateCheck,
   updateInactiveStatus,
   updateSourceConfigured,
 } from "../../src/updater.js";
@@ -330,6 +331,16 @@ test("maybeCheckForUpdate is inert with the placeholder source", async () => {
   assert.equal(result, null);
   assert.equal(calls, 0);
   assert.equal(readLastChecked(), null);
+});
+
+test("a manual check timestamp is recorded for the next start", () => {
+  const storage = installStorage();
+  const stamp = 1_800_000_000_000;
+  assert.equal(recordUpdateCheck(stamp), stamp);
+  assert.equal(readLastChecked(), stamp);
+  assert.equal(storage.getItem(UPDATE_LAST_CHECK_KEY), String(stamp));
+  assert.equal(recordUpdateCheck(0), null);
+  assert.equal(readLastChecked(), stamp);
 });
 
 test("dismissal stores and matches the version", () => {
