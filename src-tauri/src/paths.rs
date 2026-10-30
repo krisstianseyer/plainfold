@@ -212,7 +212,7 @@ pub fn display_path(path: &Path) -> String {
         if let Some(rest) = text.strip_prefix(r"\\?\") {
             return rest.to_string();
         }
-        return text.into_owned();
+        text.into_owned()
     }
     #[cfg(not(windows))]
     {

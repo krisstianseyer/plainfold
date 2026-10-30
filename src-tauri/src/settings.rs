@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -5,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::{atomic_create, atomic_write};
 use crate::errors::{AppError, AppResult};
 use crate::revisions::Retention;
+
+const MAX_DISABLED_FEATURES: usize = 200;
+const MAX_FEATURE_ID_CHARS: usize = 80;
+const MAX_RECENT_REPOSITORIES: usize = 20;
+const MIN_RECENT_REPOSITORY_LIMIT: u32 = 1;
+const MAX_RECENT_REPOSITORY_LIMIT: u32 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
@@ -27,6 +34,14 @@ pub struct Settings {
     pub revision_monthly: u32,
     pub revision_yearly: u32,
     pub desktop_shortcut_prompted: bool,
+    #[serde(default)]
+    pub disabled_features: Vec<String>,
+    #[serde(default)]
+    pub recent_repositories: Vec<String>,
+    #[serde(default)]
+    pub last_repository: Option<String>,
+    #[serde(default)]
+    pub recent_repository_limit: u32,
 }
 
 impl Default for Settings {
@@ -49,6 +64,10 @@ impl Default for Settings {
             revision_monthly: 12,
             revision_yearly: 100,
             desktop_shortcut_prompted: false,
+            disabled_features: Vec::new(),
+            recent_repositories: Vec::new(),
+            last_repository: None,
+            recent_repository_limit: 8,
         }
     }
 }
@@ -89,7 +108,52 @@ impl Settings {
         if self.font_family.trim().is_empty() {
             self.font_family = Settings::default().font_family;
         }
+
+        let mut seen_features = HashSet::new();
+        self.disabled_features = self
+            .disabled_features
+            .into_iter()
+            .filter_map(|value| {
+                let value = clean_text(&value)?;
+                let value: String = value.chars().take(MAX_FEATURE_ID_CHARS).collect();
+                if !value.is_empty() && seen_features.insert(value.clone()) {
+                    Some(value)
+                } else {
+                    None
+                }
+            })
+            .take(MAX_DISABLED_FEATURES)
+            .collect();
+
+        let mut seen_repositories = HashSet::new();
+        let mut repositories = Vec::new();
+        for value in self.recent_repositories {
+            let Some(value) = clean_text(&value) else {
+                continue;
+            };
+            if seen_repositories.insert(repository_key(&value)) {
+                repositories.push(value);
+            }
+            if repositories.len() == MAX_RECENT_REPOSITORIES {
+                break;
+            }
+        }
+        self.recent_repositories = repositories;
+        self.last_repository = match self.last_repository.take() {
+            Some(value) => clean_text(&value),
+            None => None,
+        };
+        self.recent_repository_limit = self.recent_repository_limit.clamp(
+            MIN_RECENT_REPOSITORY_LIMIT,
+            MAX_RECENT_REPOSITORY_LIMIT,
+        );
         self
+    }
+
+    /// A feature is enabled unless its id was explicitly disabled. Unknown ids
+    /// are kept so a newer build can still understand an older settings file.
+    pub fn feature_enabled(&self, id: &str) -> bool {
+        !self.disabled_features.iter().any(|feature| feature == id)
     }
 
     pub fn retention(&self) -> Retention {
@@ -100,6 +164,27 @@ impl Settings {
             monthly: self.revision_monthly,
             yearly: self.revision_yearly,
         }
+    }
+}
+
+/// Trim a user-supplied string and reject empties and control characters.
+fn clean_text(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// Windows paths are case-insensitive; other platforms compare exactly.
+fn repository_key(value: &str) -> String {
+    #[cfg(windows)]
+    {
+        value.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        value.to_string()
     }
 }
 
@@ -164,6 +249,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let loaded = load(&dir.path().join("settings.json"));
         assert_eq!(loaded.settings, Settings::default());
+        assert!(loaded.settings.disabled_features.is_empty());
+        assert!(loaded.settings.recent_repositories.is_empty());
+        assert_eq!(loaded.settings.last_repository, None);
+        assert_eq!(loaded.settings.recent_repository_limit, 8);
         assert!(loaded.notice.is_none());
     }
 
@@ -195,6 +284,14 @@ mod tests {
             revision_monthly: 12,
             revision_yearly: 100,
             theme: "dark".into(),
+            disabled_features: vec![" watcher ".into(), "watcher".into(), "revisions".into()],
+            recent_repositories: vec![
+                " C:\\Notes ".into(),
+                "C:\\Notes".into(),
+                "/home/me/notes".into(),
+            ],
+            last_repository: Some(" C:\\Notes ".into()),
+            recent_repository_limit: 99,
             ..Settings::default()
         };
         save(&path, &settings).unwrap();
@@ -212,5 +309,88 @@ mod tests {
         assert_eq!(loaded.settings.revision_monthly, 12);
         assert_eq!(loaded.settings.revision_yearly, 100);
         assert_eq!(loaded.settings.theme, "dark");
+        assert_eq!(
+            loaded.settings.disabled_features,
+            vec!["watcher".to_string(), "revisions".to_string()]
+        );
+        assert_eq!(
+            loaded.settings.recent_repositories,
+            vec!["C:\\Notes".to_string(), "/home/me/notes".to_string()]
+        );
+        assert_eq!(loaded.settings.last_repository.as_deref(), Some("C:\\Notes"));
+        assert_eq!(loaded.settings.recent_repository_limit, 20);
+    }
+
+    #[test]
+    fn sanitize_cleans_and_dedupes_new_lists() {
+        let settings = Settings {
+            disabled_features: vec![
+                " watcher ".into(),
+                "watcher".into(),
+                "".into(),
+                "   ".into(),
+                "bad\u{0}id".into(),
+                "x".repeat(100),
+            ],
+            recent_repositories: vec![
+                " C:\\Notes ".into(),
+                "C:\\Notes".into(),
+                "".into(),
+                "bad\npath".into(),
+                "/home/me/notes".into(),
+            ],
+            last_repository: Some(" C:\\Notes ".into()),
+            recent_repository_limit: 0,
+            ..Settings::default()
+        }
+        .sanitize();
+
+        assert_eq!(
+            settings.disabled_features,
+            vec!["watcher".to_string(), "x".repeat(80)]
+        );
+        assert_eq!(
+            settings.recent_repositories,
+            vec!["C:\\Notes".to_string(), "/home/me/notes".to_string()]
+        );
+        assert_eq!(settings.last_repository.as_deref(), Some("C:\\Notes"));
+        assert_eq!(settings.recent_repository_limit, 1);
+    }
+
+    #[test]
+    fn sanitize_caps_feature_and_repository_counts() {
+        let settings = Settings {
+            disabled_features: (0..250).map(|index| format!("feature{index}")).collect(),
+            recent_repositories: (0..25).map(|index| format!("/notes/{index}")).collect(),
+            ..Settings::default()
+        }
+        .sanitize();
+
+        assert_eq!(settings.disabled_features.len(), 200);
+        assert_eq!(settings.recent_repositories.len(), 20);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_repository_paths_dedupe_case_insensitively() {
+        let settings = Settings {
+            recent_repositories: vec!["C:\\Notes".into(), "c:\\notes".into()],
+            ..Settings::default()
+        }
+        .sanitize();
+
+        assert_eq!(settings.recent_repositories, vec!["C:\\Notes".to_string()]);
+    }
+
+    #[test]
+    fn feature_enabled_only_when_not_disabled() {
+        let mut settings = Settings::default();
+        assert!(settings.feature_enabled("watcher"));
+        assert!(settings.feature_enabled("revisions"));
+
+        settings.disabled_features = vec!["watcher".into(), "revisions.contextAction".into()];
+        assert!(!settings.feature_enabled("watcher"));
+        assert!(settings.feature_enabled("revisions"));
+        assert!(!settings.feature_enabled("revisions.contextAction"));
     }
 }

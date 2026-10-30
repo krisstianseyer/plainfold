@@ -31,12 +31,76 @@ pub struct RepositoryInfo {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepositoryEntry {
+    pub path: String,
+    pub name: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub version: String,
     pub settings: Settings,
     pub repository: Option<RepositoryInfo>,
+    pub recent_repositories: Vec<RepositoryEntry>,
     pub tree: Vec<TreeNode>,
     pub notices: Vec<String>,
+}
+
+fn repository_entry(path: &str) -> RepositoryEntry {
+    let candidate = Path::new(path);
+    let name = candidate
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path.to_string());
+    RepositoryEntry {
+        path: path.to_string(),
+        name,
+        exists: candidate.exists(),
+    }
+}
+
+fn recent_entries(settings: &Settings) -> Vec<RepositoryEntry> {
+    settings
+        .recent_repositories
+        .iter()
+        .map(|path| repository_entry(path))
+        .collect()
+}
+
+/// Move a successfully opened repository to the front of the list. The
+/// repository root is already canonical, so only its display form is stored.
+fn remember_repository(settings: &mut Settings, repository: &Repository) {
+    let path = crate::paths::display_path(repository.root());
+    settings
+        .recent_repositories
+        .retain(|existing| !same_path(existing, &path));
+    settings.recent_repositories.insert(0, path.clone());
+    settings.recent_repositories.truncate(20);
+    settings.last_repository = Some(path);
+}
+
+/// Drop a repository from the list and point `last_repository` at the newest
+/// remaining entry. Returns whether a matching entry was removed.
+fn forget_repository(settings: &mut Settings, path: &str) -> bool {
+    let before = settings.recent_repositories.len();
+    settings
+        .recent_repositories
+        .retain(|existing| !same_path(existing, path));
+    settings.last_repository = settings.recent_repositories.first().cloned();
+    before != settings.recent_repositories.len()
+}
+
+#[cfg(windows)]
+fn same_path(left: &str, right: &str) -> bool {
+    left.to_lowercase() == right.to_lowercase()
+}
+
+#[cfg(not(windows))]
+fn same_path(left: &str, right: &str) -> bool {
+    left == right
 }
 
 #[derive(Debug, Serialize)]
@@ -53,12 +117,31 @@ pub async fn bootstrap(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<Snapshot, String> {
-    let (settings_notice, default_repository) = {
+    let (settings_notice, candidates) = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Plainfold could not read its state.".to_string())?;
-        (inner.settings_notice.take(), inner.settings.default_repository.clone())
+        let notice = inner.settings_notice.take();
+        let mut candidates: Vec<(PathBuf, &'static str)> = Vec::new();
+        if let Some(path) = inner.settings.default_repository.clone() {
+            candidates.push((
+                PathBuf::from(path),
+                "The default repository folder could not be opened. Choose a folder to begin.",
+            ));
+        }
+        if let Some(path) = inner.settings.last_repository.clone() {
+            let duplicate = candidates
+                .iter()
+                .any(|(candidate, _)| same_path(&candidate.to_string_lossy(), &path));
+            if !duplicate {
+                candidates.push((
+                    PathBuf::from(path),
+                    "The last repository folder could not be opened. Choose a folder to begin.",
+                ));
+            }
+        }
+        (notice, candidates)
     };
 
     let mut notices = Vec::new();
@@ -66,9 +149,10 @@ pub async fn bootstrap(
         notices.push(notice);
     }
 
-    if let Some(path) = default_repository {
+    for (path, failure_notice) in candidates {
         let arc: Arc<AppState> = (*state).clone();
-        let opened = spawn_blocking(move || open_repository_impl(&arc, &app, PathBuf::from(path)))
+        let app_handle = app.clone();
+        let opened = spawn_blocking(move || open_repository_impl(&arc, &app_handle, path))
             .await
             .map_err(|_| "The operation could not be completed.".to_string())?;
         match opened {
@@ -78,10 +162,7 @@ pub async fn bootstrap(
                 snapshot.notices = combined;
                 return Ok(snapshot);
             }
-            Err(_) => notices.push(
-                "The default repository folder could not be opened. Choose a folder to begin."
-                    .to_string(),
-            ),
+            Err(_) => notices.push(failure_notice.to_string()),
         }
     }
 
@@ -93,6 +174,7 @@ pub async fn bootstrap(
         version: env!("CARGO_PKG_VERSION").to_string(),
         settings: inner.settings.clone(),
         repository: None,
+        recent_repositories: recent_entries(&inner.settings),
         tree: Vec::new(),
         notices,
     })
@@ -136,37 +218,62 @@ fn open_repository_impl(
         }
     };
 
-    let watcher = match watcher::start(app.clone(), Arc::clone(state), repository.clone()) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            notices.push(format!(
-                "{error} Changes made by other programs may not be detected."
-            ));
-            None
+    let watcher_enabled = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        inner.settings.feature_enabled("watcher")
+    };
+    let watcher = if watcher_enabled {
+        match watcher::start(app.clone(), Arc::clone(state), repository.clone()) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                notices.push(format!(
+                    "{error} Changes made by other programs may not be detected."
+                ));
+                None
+            }
         }
+    } else {
+        None
     };
 
-    let mut inner = state
-        .inner
-        .lock()
-        .map_err(|_| "Plainfold could not read its state.".to_string())?;
+    let settings_path = state.settings_path();
+    let (settings_snapshot, tree) = {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
 
-    inner.watcher = None;
-    inner.watcher = watcher;
-    inner.index_notice = index_notice;
-    inner.repository = Some(repository.clone());
-    inner.index = index;
-    inner.undo.reset();
-    let backup = state.undo_backup_dir(repository.root());
-    undo::prune(&backup, UNDO_WINDOW);
-    inner.undo_backup_dir = Some(backup);
+        inner.watcher = watcher;
+        inner.index_notice = index_notice;
+        inner.repository = Some(repository.clone());
+        inner.index = index;
+        inner.undo.reset();
+        let backup = state.undo_backup_dir(repository.root());
+        undo::prune(&backup, UNDO_WINDOW);
+        inner.undo_backup_dir = Some(backup);
 
-    let sort = SortOrder::parse(&inner.settings.default_sort);
-    let tree = tree::build_tree(&repository, sort, inner.index.as_ref());
+        remember_repository(&mut inner.settings, &repository);
+        let settings_snapshot = inner.settings.clone();
+        let sort = SortOrder::parse(&settings_snapshot.default_sort);
+        let tree = tree::build_tree(&repository, sort, inner.index.as_ref());
+        (settings_snapshot, tree)
+    };
+
+    // Saving is best-effort: losing the recent list must never stop the
+    // repository from opening.
+    if settings::save(&settings_path, &settings_snapshot).is_err() {
+        notices.push(
+            "The repository opened, but its recent-repositories list could not be saved."
+                .to_string(),
+        );
+    }
 
     Ok(Snapshot {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        settings: inner.settings.clone(),
+        settings: settings_snapshot.clone(),
         repository: Some(RepositoryInfo {
             path: crate::paths::display_path(repository.root()),
             name: repository
@@ -175,6 +282,7 @@ fn open_repository_impl(
                 .map(|value| value.to_string_lossy().to_string())
                 .unwrap_or_else(|| "repository".to_string()),
         }),
+        recent_repositories: recent_entries(&settings_snapshot),
         tree,
         notices,
     })
@@ -359,13 +467,18 @@ fn save_file_impl(
             } if last == path => Some(content.clone()),
             _ => None,
         });
+    let retention = if inner.settings.feature_enabled("revisions") {
+        Some(inner.settings.retention())
+    } else {
+        None
+    };
     let outcome = repository::save_file_with_revisions(
         &repository,
         path,
         content,
         encoding,
         eol,
-        Some(inner.settings.retention()),
+        retention,
     )
     .map_err(|error| error.to_string())?;
     let previous = match pending {
@@ -1019,6 +1132,17 @@ pub fn save_settings(
             }
         }
     }
+    // The list and the last opened repository are server-managed; a settings
+    // save must never erase them with whatever the front end sent.
+    {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        settings.recent_repositories = inner.settings.recent_repositories.clone();
+        settings.last_repository = inner.settings.last_repository.clone();
+    }
+
     settings::save(&state.settings_path(), &settings).map_err(|error| error.to_string())?;
     let mut inner = state
         .inner
@@ -1026,4 +1150,135 @@ pub fn save_settings(
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
     inner.settings = settings.clone();
     Ok(settings)
+}
+
+#[tauri::command]
+pub fn remove_recent_repository(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<Vec<RepositoryEntry>, String> {
+    let (settings_snapshot, settings_path) = {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Plainfold could not read its state.".to_string())?;
+        if let Some(repository) = inner.repository.as_ref() {
+            let current = crate::paths::display_path(repository.root());
+            if same_path(&current, &path) {
+                return Err(
+                    "Switch to another repository before removing this one.".to_string()
+                );
+            }
+        }
+        forget_repository(&mut inner.settings, &path);
+        (inner.settings.clone(), state.settings_path())
+    };
+
+    settings::save(&settings_path, &settings_snapshot).map_err(|error| error.to_string())?;
+    Ok(recent_entries(&settings_snapshot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn repository_in(parent: &Path, name: &str) -> Repository {
+        let root = parent.join(name);
+        fs::create_dir_all(&root).unwrap();
+        Repository::open(&root).unwrap()
+    }
+
+    #[test]
+    fn remember_repository_orders_and_dedupes() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = repository_in(temp.path(), "one");
+        let second = repository_in(temp.path(), "two");
+        let first_path = crate::paths::display_path(first.root());
+        let second_path = crate::paths::display_path(second.root());
+        let mut settings = Settings::default();
+
+        remember_repository(&mut settings, &first);
+        remember_repository(&mut settings, &second);
+        assert_eq!(
+            settings.recent_repositories,
+            vec![second_path.clone(), first_path.clone()]
+        );
+        assert_eq!(settings.last_repository.as_deref(), Some(second_path.as_str()));
+
+        // Reopening an older repository moves it to the front without growing
+        // the list.
+        remember_repository(&mut settings, &first);
+        assert_eq!(
+            settings.recent_repositories,
+            vec![first_path.clone(), second_path.clone()]
+        );
+        assert_eq!(settings.last_repository.as_deref(), Some(first_path.as_str()));
+    }
+
+    #[test]
+    fn remember_repository_truncates_to_twenty() {
+        let temp = tempfile::tempdir().unwrap();
+        let repositories: Vec<Repository> = (0..25)
+            .map(|index| repository_in(temp.path(), &format!("repo{index}")))
+            .collect();
+        let mut settings = Settings::default();
+        for repository in &repositories {
+            remember_repository(&mut settings, repository);
+        }
+
+        assert_eq!(settings.recent_repositories.len(), 20);
+        assert_eq!(
+            settings.recent_repositories[0],
+            crate::paths::display_path(repositories[24].root())
+        );
+        assert_eq!(
+            settings.recent_repositories[19],
+            crate::paths::display_path(repositories[5].root())
+        );
+        let newest = crate::paths::display_path(repositories[24].root());
+        assert_eq!(settings.last_repository.as_deref(), Some(newest.as_str()));
+    }
+
+    #[test]
+    fn recent_entries_report_names_and_existence() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("Notes");
+        fs::create_dir(&existing).unwrap();
+        let missing = temp.path().join("Gone");
+        let existing_path = crate::paths::display_path(&existing);
+        let missing_path = crate::paths::display_path(&missing);
+        let settings = Settings {
+            recent_repositories: vec![existing_path.clone(), missing_path.clone()],
+            ..Settings::default()
+        };
+
+        let entries = recent_entries(&settings);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, existing_path);
+        assert_eq!(entries[0].name, "Notes");
+        assert!(entries[0].exists);
+        assert_eq!(entries[1].path, missing_path);
+        assert_eq!(entries[1].name, "Gone");
+        assert!(!entries[1].exists);
+    }
+
+    #[test]
+    fn forgetting_a_repository_points_at_the_newest_remaining_entry() {
+        let mut settings = Settings {
+            recent_repositories: vec!["C:/one".into(), "C:/two".into()],
+            last_repository: Some("C:/one".into()),
+            ..Settings::default()
+        };
+
+        assert!(forget_repository(&mut settings, "C:/one"));
+        assert_eq!(settings.recent_repositories, vec!["C:/two".to_string()]);
+        assert_eq!(settings.last_repository.as_deref(), Some("C:/two"));
+
+        assert!(forget_repository(&mut settings, "C:/two"));
+        assert!(settings.recent_repositories.is_empty());
+        assert_eq!(settings.last_repository, None);
+
+        assert!(!forget_repository(&mut settings, "C:/missing"));
+    }
 }

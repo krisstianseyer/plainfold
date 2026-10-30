@@ -152,7 +152,7 @@ fn copy_tree(source: &Path, target: &Path) -> AppResult<()> {
 }
 
 fn sanitize(relative: &str) -> String {
-    relative.replace('/', "__").replace('\\', "__")
+    relative.replace(['/', '\\'], "__")
 }
 
 /// Put a kept copy back in the repository. An occupied path gets a numbered name
