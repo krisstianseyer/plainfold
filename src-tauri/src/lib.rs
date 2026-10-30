@@ -47,6 +47,7 @@ pub fn run() {
             commands::list_tree,
             commands::read_file,
             commands::open_external,
+            commands::open_update_page,
             commands::list_revisions,
             commands::restore_revision,
             commands::save_file,

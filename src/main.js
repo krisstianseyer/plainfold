@@ -17,6 +17,12 @@ import {
   UPDATE_OWNER,
   UPDATE_REPO,
   checkForUpdate,
+  dismissUpdate,
+  isAllowedReleaseUrl,
+  isUpdateDismissed,
+  maybeCheckForUpdate,
+  readLastChecked,
+  updateInactiveStatus,
   updateSourceConfigured,
   updateSourceLabel,
 } from "./updater.js";
@@ -270,6 +276,8 @@ const state = {
     currentVersion: "",
     latestVersion: null,
     lastChecked: null,
+    checking: false,
+    releaseUrl: null,
     status: "",
   },
 };
@@ -3157,7 +3165,7 @@ function refreshSettingsDynamic() {
   if (els.settingUpdateStatus) {
     els.settingUpdateStatus.textContent = configured
       ? state.updateInfo.status || "No update check has run yet."
-      : "Update checks are inactive until an update source is configured.";
+      : updateInactiveStatus();
   }
   if (els.settingUpdateVersions) {
     const current = state.version || state.updateInfo.currentVersion;
@@ -3428,33 +3436,108 @@ async function rebuildSearchIndex() {
   }
 }
 
-async function checkUpdatesNow() {
-  if (!updateSourceConfigured()) {
-    if (els.settingUpdateStatus) {
-      els.settingUpdateStatus.textContent =
-        "Update checks are inactive until an update source is configured.";
-    }
+/** Show the notify-only banner. The banner mirrors state.updateInfo. */
+function showUpdateBanner(result) {
+  if (!els.updateBanner) return;
+  if (
+    !result?.configured ||
+    !result.updateAvailable ||
+    !result.latestVersion ||
+    !featureOn("updates") ||
+    !featureOn("updates.banner") ||
+    isUpdateDismissed(result.latestVersion)
+  ) {
+    hideUpdateBanner();
     return;
   }
-  state.updateInfo.checking = true;
-  if (els.settingUpdateCheck) els.settingUpdateCheck.disabled = true;
+  els.updateBannerText.textContent = `Plainfold ${result.latestVersion} is available.`;
+  if (els.updateBannerNotes) {
+    els.updateBannerNotes.disabled = !isAllowedReleaseUrl(result.releaseUrl);
+  }
+  els.updateBanner.hidden = false;
+}
+
+function hideUpdateBanner() {
+  if (els.updateBanner) els.updateBanner.hidden = true;
+}
+
+/** Plain-language status for Settings > Updates. */
+function updateStatusFor(result) {
+  if (!result.configured) return updateInactiveStatus();
+  if (result.error) return result.error;
+  if (result.updateAvailable && result.latestVersion) {
+    return `Plainfold ${result.latestVersion} is available.`;
+  }
+  if (result.latestVersion) return "Plainfold is up to date.";
+  return "No published release is available.";
+}
+
+function applyUpdateResult(result) {
+  state.updateInfo = {
+    currentVersion: result.currentVersion || state.version,
+    latestVersion: result.latestVersion ?? null,
+    lastChecked: result.checkedAt ?? Date.now(),
+    checking: false,
+    releaseUrl: result.releaseUrl ?? null,
+    status: updateStatusFor(result),
+  };
+  if (result.updateAvailable) showUpdateBanner(result);
+  else if (!result.error) hideUpdateBanner();
+  refreshSettingsDynamic();
+}
+
+/**
+ * Launch check: guarded by the updates group and auto-check control, cached
+ * for 24 hours, and deliberately not awaited so startup is never blocked.
+ */
+async function runLaunchUpdateCheck() {
+  if (!featureOn("updates") || !featureOn("updates.autoCheck")) return;
+  if (!updateSourceConfigured()) {
+    state.updateInfo.status = updateInactiveStatus();
+    refreshSettingsDynamic();
+    return;
+  }
   try {
-    const result = await checkForUpdate({ currentVersion: state.version });
-    state.updateInfo = {
-      currentVersion: result.currentVersion ?? state.version,
-      latestVersion: result.latestVersion ?? null,
-      lastChecked: Date.now(),
-      checking: false,
-      status: result.error
-        ? result.error
-        : result.updateAvailable
-          ? `Plainfold ${result.latestVersion} is available.`
-          : "Plainfold is up to date.",
-    };
+    const result = await maybeCheckForUpdate({ currentVersion: state.version });
+    if (result) {
+      applyUpdateResult(result);
+    } else if (state.updateInfo.lastChecked) {
+      // The 24-hour cache skipped the request; keep the timestamp readable.
+      state.updateInfo.status = "A check already ran in the last 24 hours.";
+      refreshSettingsDynamic();
+    }
   } catch (error) {
     state.updateInfo = {
       ...state.updateInfo,
       checking: false,
+      lastChecked: Date.now(),
+      status: errText(error),
+    };
+    refreshSettingsDynamic();
+  }
+}
+
+async function checkUpdatesNow() {
+  // Manual checks stay available when only automatic checks are off.
+  if (!featureOn("updates") || !featureOn("updates.settingsSection")) return;
+  if (!updateSourceConfigured()) {
+    state.updateInfo.status = updateInactiveStatus();
+    refreshSettingsDynamic();
+    return;
+  }
+  if (state.updateInfo.checking) return;
+  state.updateInfo.checking = true;
+  state.updateInfo.status = "Checking for updates…";
+  if (els.settingUpdateCheck) els.settingUpdateCheck.disabled = true;
+  refreshSettingsDynamic();
+  try {
+    const result = await checkForUpdate({ currentVersion: state.version });
+    applyUpdateResult(result);
+  } catch (error) {
+    state.updateInfo = {
+      ...state.updateInfo,
+      checking: false,
+      lastChecked: Date.now(),
       status: errText(error),
     };
   } finally {
@@ -3667,14 +3750,22 @@ function wireEvents() {
   els.settingUpdateCheck?.addEventListener("click", checkUpdatesNow);
   els.resetEditorZoom?.addEventListener("click", resetZoom);
   els.updateBannerDismiss?.addEventListener("click", () => {
-    if (els.updateBanner) els.updateBanner.hidden = true;
+    if (state.updateInfo.latestVersion) {
+      dismissUpdate(state.updateInfo.latestVersion);
+    }
+    hideUpdateBanner();
   });
-  els.updateBannerNotes?.addEventListener("click", () => {
-    setStatus(
-      updateSourceConfigured()
-        ? "Release notes are available with the update checker."
-        : "Release notes are not available until an update source is configured."
-    );
+  els.updateBannerNotes?.addEventListener("click", async () => {
+    const url = state.updateInfo.releaseUrl;
+    if (!isAllowedReleaseUrl(url)) {
+      setStatus("That update link could not be opened.");
+      return;
+    }
+    try {
+      await api.openUpdatePage(url);
+    } catch (error) {
+      setStatus(errText(error));
+    }
   });
 
   els.settingsButton.addEventListener("click", openSettings);
@@ -4042,6 +4133,11 @@ async function init() {
     if (snapshot.notices?.length) {
       handleNotices(snapshot.notices);
     }
+    state.updateInfo.currentVersion = state.version;
+    state.updateInfo.lastChecked = readLastChecked();
+    refreshSettingsDynamic();
+    // Start the cached launch check immediately; it is never awaited here.
+    void runLaunchUpdateCheck();
     await offerDesktopShortcut();
   } catch (error) {
     setStatus(errText(error));
