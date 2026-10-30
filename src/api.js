@@ -20,6 +20,8 @@ export const api = {
   rescan: () => invoke("rescan"),
   getOrganization: () => invoke("get_organization"),
   removeRecent: (path) => invoke("remove_recent", { path }),
+  removeRecentRepository: (path) =>
+    invoke("remove_recent_repository", { path }),
   setTags: (path, tags) => invoke("set_tags", { path, tags }),
   setPin: (path, pinned) => invoke("set_pin", { path, pinned }),
   setSortOrder: (parent, names) => invoke("set_sort_order", { parent, names }),

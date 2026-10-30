@@ -709,6 +709,8 @@ button.side-title:focus-visible {
   background: transparent;
   color: var(--text);
   text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
 .repository-list .repository-entry:hover,
@@ -716,7 +718,40 @@ button.side-title:focus-visible {
   background: var(--surface-2);
 }
 
+.repository-list .repository-entry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.repository-list .repository-entry.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.repository-list .repository-entry.active:hover,
+.repository-list .repository-entry.active:focus-visible {
+  background: var(--accent-soft);
+}
+
+.repository-list .repository-entry:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.repository-list .repository-entry:disabled:hover {
+  background: transparent;
+}
+
+.repository-list .repository-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .repository-list .repository-name {
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   font-size: 12.5px;
@@ -739,9 +774,26 @@ button.side-title:focus-visible {
   font-weight: 600;
 }
 
+.repository-list .repository-active {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .repository-list .repository-missing {
+  flex: 0 0 auto;
   color: var(--danger);
-  font-size: 10.5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.repository-list li.missing .repository-path {
+  color: var(--danger);
 }
 
 .repository-list .repository-remove {
@@ -768,6 +820,11 @@ button.side-title:focus-visible {
   border-color: var(--border);
   background: var(--surface-2);
   color: var(--text);
+}
+
+.repository-list .repository-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .repository-list .repository-remove:disabled {
@@ -1903,20 +1960,79 @@ body.repository-loading .pane-resizer {
 .settings-repository-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 4px 0 0;
 }
 
 .settings-repository-list li + li {
   border-top: 1px solid var(--border);
 }
 
+.settings-repository-list .repository-entry {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-repository-list .repository-entry:hover,
+.settings-repository-list .repository-entry:focus-visible {
+  background: var(--surface-2);
+}
+
+.settings-repository-list .repository-entry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.settings-repository-list .repository-entry.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.settings-repository-list .repository-entry.active:hover,
+.settings-repository-list .repository-entry.active:focus-visible {
+  background: var(--accent-soft);
+}
+
+.settings-repository-list .repository-entry:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.settings-repository-list .repository-entry:disabled:hover {
+  background: transparent;
+}
+
+.settings-repository-list .repository-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .settings-repository-list .repository-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: 12.5px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-repository-list .repository-path {
+  max-width: 100%;
   overflow: hidden;
   color: var(--faint);
   font-family: var(--mono);
@@ -1925,21 +2041,50 @@ body.repository-loading .pane-resizer {
   white-space: nowrap;
 }
 
-.settings-repository-list .repository-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
 .settings-repository-list .repository-active {
   flex: 0 0 auto;
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.settings-repository-list .repository-missing {
+  flex: 0 0 auto;
+  color: var(--danger);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.settings-repository-list .repository-remove {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.settings-repository-list .repository-remove:hover {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.settings-repository-list .repository-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .settings-repository-list .empty {
+  padding: 8px 10px;
   color: var(--faint);
   font-size: 12.5px;
 }
