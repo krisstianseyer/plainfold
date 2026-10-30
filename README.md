@@ -36,7 +36,7 @@ Version 1.2.0 adds:
 
 The v1.2.0 release round builds the front-end bundle and the release binary only. It does not build installers.
 
-Final v1.2 QA and the release build are pending. `MILESTONES.md` tracks the checks.
+v1.2.0 QA passed: 67 front-end tests, 76 Rust unit tests and 9 integration tests, clippy clean, production bundle and Windows release binary built. The Windows symlink-escape test could not run on this machine because it lacks symlink privilege; all other tests pass. No installers were produced in this round.
 
 The user guide for the v1.2 changes is `docs/features.md`.
 

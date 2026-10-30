@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Every backend call goes through this module; no network access exists. */
+/** Every backend call goes through this module. The only network request is
+ *  the optional update check in updater.js; no IPC call here uses the network. */
 export const api = {
   bootstrap: () => invoke("bootstrap"),
   openRepository: (path) => invoke("open_repository", { path }),

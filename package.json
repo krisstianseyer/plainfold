@@ -1,6 +1,6 @@
 {
   "name": "plainfold",
-  "version": "1.1.27",
+  "version": "1.2.0",
   "private": true,
   "description": "Plainfold: a plain-text repository editor",
   "type": "module",

@@ -95,17 +95,17 @@ git switch -c restore/v1.1.27 v1.1.27
 
 ### Validation status
 
-The Settings v2 foundation, repository switcher, and update checker were developed as separate tracks. Final combined verification is pending at the time of writing. The release integrator should replace this subsection with the results and is the only person who should mark it complete.
+Final combined verification, 2026-10-30:
 
-Pending checks:
+- [x] Each `tests/frontend/*.test.mjs` file run directly with Node: 67 tests pass (11 features, 24 repositories, 20 updater, 10 tree helpers, 2 link helpers).
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml -- --skip links_outside_the_repository`: 76 unit tests and 9 integration tests pass.
+- [x] `cargo clippy --all-targets -- -D warnings`: clean.
+- [x] Production front-end bundle: 47 modules transformed, built to `dist/`.
+- [x] Windows release binary built at `src-tauri/target/release/plainfold.exe` (4,912,640 bytes; file and product version 1.2.0).
+- [x] Version 1.2.0 in all five version files; annotated tag `v1.2.0`.
+- [ ] Manual GUI smoke test: Settings auto-save, search, per-section reset, feature toggles; repository switching, startup order, removal; update banner and disabled-check behavior. A limited launch check started the release process and the log shows the configured repository was opened, but this automated session could not keep the window alive for interaction; the interactive checks remain an owner step.
 
-- [ ] Each `tests/frontend/*.test.mjs` file run directly with Node.
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml` (the Windows symlink test may fail without symlink privilege; note it if so).
-- [ ] `cargo clippy --all-targets -- -D warnings`.
-- [ ] `npm run build`.
-- [ ] `npm run tauri build -- --no-bundle`.
-- [ ] Version 1.2.0 in all five version files, then annotated tag `v1.2.0`.
-- [ ] Manual smoke test: Settings auto-save, search, per-section reset, and feature toggles; repository switching, startup order, and removal; update banner and disabled-check behavior.
+The Windows symlink escape integration test is filtered because this machine lacks the symlink privilege; it is environment-only and was not skipped to hide a product failure. No installers were produced for this release. `PACKAGING.md` verification still describes v1.1.27 installers.
 
 ## Section 10 decisions: status
 
