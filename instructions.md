@@ -10,7 +10,7 @@ Plainfold is a desktop app for Windows and Linux, inspired by Obsidian, that wor
 
 - No Markdown or HTML rendering or preview, and no WYSIWYG editing.
 - No split panes, graph view, quick switcher, or plugin system.
-- No cloud sync, accounts, telemetry, or any network access.
+- No cloud sync, accounts, or telemetry. Network access is limited to the optional, notify-only GitHub release check added in v1.2; it can be disabled in Settings > Updates and never downloads or installs anything.
 - No mobile version.
 - No embedded terminal, and no running of scripts (.js, .bat) from inside the app.
 
@@ -80,7 +80,7 @@ Plainfold is a desktop app for Windows and Linux, inspired by Obsidian, that wor
 - Ctrl+F focuses the search box. Search matches file names and file contents, case-insensitively.
 - Contents search uses the FTS5 index. Only files under 2 MB are indexed for contents. Larger files are searched by name only.
 - Each result shows the path and the matching line number, with the matching line. Clicking a result opens the file at that position.
-- The index updates when files change, through the file watcher. A Rescan command rebuilds it from scratch.
+- The index updates when files change, through the file watcher. "Rebuild search index" in Settings > Maintenance rebuilds it from scratch. The old toolbar Rescan button was removed in v1.2.
 - Regular expressions are not in v1.
 
 ### 7.5 Settings
@@ -130,7 +130,7 @@ Build in this order. Each milestone must end in a working, tested state before t
 - Canonicalize every path and reject any path that resolves outside the vault root. Do not follow symbolic links that point outside the vault.
 - Never write file contents to logs. Log only paths, error codes, and timings.
 - Show errors to the user in plain language. Keep technical details in the log.
-- No network access and no telemetry, including crash reporting.
+- No telemetry, including crash reporting. The only network access is the optional, notify-only GitHub release check in v1.2. It sends no account, identifier, or file data, and it can be disabled in Settings > Updates. No other host is contacted.
 - Write unit tests for path validation, name validation, encoding detection, line-ending preservation, atomic save, and index queries. Write an integration test that creates a temporary vault, edits and saves files, and checks the results on disk.
 - Commit at the end of each milestone with a message naming the milestone.
 - Do not change a decision in this document. If a decision seems wrong, write the proposed change in the milestone notes and wait for the owner.

@@ -60,7 +60,7 @@ The build follows the milestone order in `instructions.md` section 8. All milest
 
 - Tags live only in the index and are shown in the file header and as tree filters.
 - Pins are shown above the tree; recent files are the most recent opens. Settings default to 5 pinned and 5 recent entries, configurable from 1-100.
-- Custom order is drag-and-drop within a folder only. Cross-folder moves are not implemented (see decision 3).
+- Custom order is drag-and-drop within a folder. Drag-to-move between folders and to the repository root was added later, in the v1.1 line.
 - Index schema includes an unused `links` table so double-bracket links can be added later without a data migration.
 
 ## Milestone 8: external changes
@@ -76,6 +76,37 @@ The build follows the milestone order in `instructions.md` section 8. All milest
 - Ubuntu 24.04 (Debian family, WSL): `.deb` built with Tauri, installed with `apt`, passed an `ldd` missing-library check, and removed cleanly.
 - `.rpm` built from the same source with `rpmbuild` on Ubuntu; RPM metadata and dependencies were inspected. The Fedora CI job installs the RPM; desktop launch remains a VM step.
 
+## Version 1.2
+
+Version 1.2.0 follows the v1.1.27 rollback point. The work covers:
+
+- **Settings v2.** Left category navigation, search, auto-save with per-section reset, and no Save/Cancel footer. The Features tab lists all 21 feature groups with advanced per-control toggles. The safety floor cannot be disabled.
+- **Repositories.** Recent repositories and multiple saved repositories with one active repository. The list appears in the sidebar above Pinned and on the welcome screen. Startup reopens the last active repository unless a startup repository is configured. Removing an entry never deletes files.
+- **Rescan move.** The toolbar Rescan button is removed; Rebuild search index is in Settings > Maintenance.
+- **Updates.** An automatic, notify-only GitHub Releases check on launch, inert until a real source is configured, with a Settings toggle. No downloads, installs, telemetry, accounts, or other hosts.
+- **Dependencies.** No new runtime dependencies. The update check uses the webview's `fetch`; release links use the existing `opener` crate.
+- **Release shape.** The round builds the front-end bundle and the release binary only. No installers are produced for 1.2.0.
+
+Rollback: the annotated tag `v1.1.27` points at commit `dcc676e`.
+
+```sh
+git switch -c restore/v1.1.27 v1.1.27
+```
+
+### Validation status
+
+The Settings v2 foundation, repository switcher, and update checker were developed as separate tracks. Final combined verification is pending at the time of writing. The release integrator should replace this subsection with the results and is the only person who should mark it complete.
+
+Pending checks:
+
+- [ ] Each `tests/frontend/*.test.mjs` file run directly with Node.
+- [ ] `cargo test --manifest-path src-tauri/Cargo.toml` (the Windows symlink test may fail without symlink privilege; note it if so).
+- [ ] `cargo clippy --all-targets -- -D warnings`.
+- [ ] `npm run build`.
+- [ ] `npm run tauri build -- --no-bundle`.
+- [ ] Version 1.2.0 in all five version files, then annotated tag `v1.2.0`.
+- [ ] Manual smoke test: Settings auto-save, search, per-section reset, and feature toggles; repository switching, startup order, and removal; update banner and disabled-check behavior.
+
 ## Section 10 decisions: status
 
 These are implemented with the proposed defaults in `instructions.md`. They remain **pending owner confirmation**; each is isolated so it can be changed without touching file content.
@@ -84,14 +115,14 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 |---|---|---|---|
 | 1 | Backlinks in v1? | Not in v1. `links` table reserved. | `src-tauri/src/index.rs` |
 | 2 | External change with unsaved edits | Keep edits, show a notice | `src/main.js` `vault-changed` handler |
-| 3 | Rename and move in v1? | Not in v1. Drag only reorders within a folder. | `src/main.js` `dropReorder` |
+| 3 | Rename and move in v1? | Rename is not offered. Drag reorders within a folder; drag-to-move between folders was added in the v1.1 line. | `src/main.js` `dropReorder`, `movePath` |
 | 4 | Delete behavior | Trash only, with confirmation | `src-tauri/src/vault.rs` `delete_item` |
 | 5 | Non-UTF-8 files | Open read-only, no conversion | `src-tauri/src/encoding.rs` |
 | 6 | Front-end framework | None; vanilla ES modules | `src/` |
 | 7 | Bundle identifier and publisher | `com.plainfold.app`, publisher Plainfold (placeholders) | `src-tauri/tauri.conf.json` |
 | 8 | Size limits | 5 MB edit, 2 MB content indexing | `src-tauri/src/encoding.rs` |
 | 9 | Quick switcher and graph | Out of v1 | not implemented |
-| 10 | Custom sort interaction | Drag and drop within a folder | `src/main.js` |
+| 10 | Custom sort interaction | Drag and drop within a folder; drag-to-move between folders added later | `src/main.js` |
 
 ## Desktop shortcuts and macOS scope
 
@@ -118,10 +149,14 @@ These are implemented with the proposed defaults in `instructions.md`. They rema
 - The local `.deb` and `.rpm` artifacts predate the Linux desktop-shortcut change. Rebuild them and verify the first-run prompt in a real desktop session before release.
 - Search is case-insensitive through SQLite `LIKE` for names, which folds ASCII case; non-ASCII name casing relies on SQLite's behavior. Contents use FTS5 Unicode case folding.
 - Linux file or folder names that are not valid UTF-8 are skipped by the tree and index because the IPC and settings layer carries UTF-8 strings.
-- The app has no rename/move feature in v1, by decision.
+- There is no rename command. Drag-to-move between folders and to the repository root is available.
+- The update checker stays inert until the owner replaces the placeholder owner and repository in `src/updater.js`.
+- The v1.2.0 release round builds the front-end bundle and the release binary only. No installers are produced for 1.2.0, and the packaging verification in `PACKAGING.md` remains valid for v1.1.27.
 - The bundled front-end chunk exceeds Vite's default 500 kB warning because CodeMirror and its language modes are bundled with no code splitting. Nothing is fetched at runtime.
 
 ## Validation performed
+
+The results below describe v1.1.27. They are not evidence for the v1.2 build.
 
 - Rust: 55 unit tests and 9 integration tests pass on Windows; 57 unit tests and 9 integration tests pass on Ubuntu 24.04 WSL, including Linux XDG desktop-shortcut parsing and file creation. Coverage includes symlink escape, corrupt-index recovery, atomic rename failure cleanup, encoding mismatches, oversized saves, Unicode name search, drag-reorder persistence, move/index migration, GFS revision capture/restore/rotation, and the exact 2 MiB content-index boundary.
 - Clippy is clean with `-D warnings` on Windows and Linux.
