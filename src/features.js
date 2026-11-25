@@ -11,12 +11,12 @@ export const FEATURE_GROUPS = [
   {
     id: "search",
     label: "Search",
-    description: "The toolbar search field, its shortcut, and the results panel.",
+    description: "The sidebar search field, its shortcut, and the results panel.",
     controls: [
       {
         id: "search.toolbar",
-        label: "Search toolbar",
-        description: "Show the search field in the top bar.",
+        label: "Search field",
+        description: "Show the search field in the sidebar.",
       },
       {
         id: "search.shortcut",
@@ -157,8 +157,8 @@ export const FEATURE_GROUPS = [
     controls: [
       {
         id: "repositoryUndo.buttons",
-        label: "Undo/redo buttons",
-        description: "Show the Undo and Redo buttons in the toolbar.",
+        label: "Undo/redo menu items",
+        description: "Enable repository undo and redo in the Edit menu.",
       },
       {
         id: "repositoryUndo.shortcuts",
@@ -253,7 +253,7 @@ export const FEATURE_GROUPS = [
       {
         id: "editorStats.statusWords",
         label: "Word and character counts",
-        description: "Show word, character, and size counts in the status bar.",
+        description: "Show word, character, and size counts in the filename tooltip.",
       },
     ],
   },
@@ -265,7 +265,7 @@ export const FEATURE_GROUPS = [
       {
         id: "repositoryCounts.statusCounts",
         label: "Folder and file counts",
-        description: "Show repository totals in the status bar.",
+        description: "Show repository totals on the Repository heading.",
       },
     ],
   },
@@ -315,13 +315,13 @@ export const FEATURE_GROUPS = [
   },
   {
     id: "about",
-    label: "About popover",
-    description: "The brand button, version, and repository link.",
+    label: "Application menu info",
+    description: "App description, version, and repository link in the Application menu.",
     controls: [
       {
         id: "about.brand",
-        label: "About button",
-        description: "Show the Plainfold brand button.",
+        label: "About block",
+        description: "Show the app description, version, and repository link.",
       },
       {
         id: "about.version",
@@ -333,22 +333,10 @@ export const FEATURE_GROUPS = [
         label: "GitHub link",
         description: "Show the GitHub repository link placeholder.",
       },
-    ],
-  },
-  {
-    id: "zoom",
-    label: "Zoom gestures",
-    description: "Editor zoom with Ctrl+wheel and resetting with Ctrl+0.",
-    controls: [
       {
-        id: "zoom.wheel",
-        label: "Ctrl+wheel zoom",
-        description: "Change the editor zoom with Ctrl+wheel.",
-      },
-      {
-        id: "zoom.resetShortcut",
-        label: "Ctrl+0 zoom reset",
-        description: "Reset the editor zoom with Ctrl+0.",
+        id: "about.supportLink",
+        label: "Support link",
+        description: "Show the Ko-fi link for supporting Plainfold.",
       },
     ],
   },
@@ -432,7 +420,6 @@ export const FEATURE_CATEGORIES = Object.freeze({
   wrap: "Editing",
   syntaxHighlighting: "Editing",
   editorStats: "Editing",
-  zoom: "Editing",
   updates: "Application",
   about: "Application",
   desktopShortcut: "Application",

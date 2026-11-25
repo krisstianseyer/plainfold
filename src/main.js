@@ -3,6 +3,18 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { api } from "./api.js";
+import {
+  DEFAULT_COLOR_SETTINGS,
+  appendColorMenu,
+  applySectionColors,
+  closeColorMenu,
+  configureColors,
+  decorateLabel,
+  decorateRepository,
+  decorateTreeEntry,
+  normalizeColorSettings,
+  renderColorSettings,
+} from "./colors.js";
 import { createEditor } from "./editor.js";
 import {
   FEATURE_CATEGORIES,
@@ -53,15 +65,28 @@ import {
 const $ = (id) => document.getElementById(id);
 
 const els = {
-  openRepository: $("open-repository"),
+  sidebarToggle: $("sidebar-toggle"),
+  sidebarOpenRepository: $("sidebar-open-repository"),
+  sidebarAddRepository: $("sidebar-add-repository"),
+  sidebarMore: $("sidebar-more"),
+  menuApplication: $("menu-application"),
+  applicationMenu: $("application-menu"),
+  menuEdit: $("menu-edit"),
+  editMenu: $("edit-menu"),
+  menuOpenRepository: $("menu-open-repository"),
+  menuSave: $("menu-save"),
+  menuCloseFile: $("menu-close-file"),
+  menuSettings: $("menu-settings"),
+  menuQuit: $("menu-quit"),
+  menuWrap: $("menu-wrap"),
   emptyOpen: $("empty-open"),
+  emptySecondary: $("empty-secondary"),
   emptyState: $("empty-state"),
   emptyTitle: document.querySelector("#empty-state h1"),
   emptyCopy: document.querySelector("#empty-state p"),
   search: $("search"),
-  undoButton: $("undo-button"),
-  redoButton: $("redo-button"),
-  settingsButton: $("settings-button"),
+  sidebarSearchSlot: $("sidebar-search-slot"),
+  contentSearchSlot: $("content-search-slot"),
   pinnedList: $("pinned-list"),
   recentList: $("recent-list"),
   repositoryList: $("repository-list"),
@@ -74,15 +99,11 @@ const els = {
   treeFilter: $("tree-filter"),
   treeEmpty: $("tree-empty"),
   rootDropZone: $("root-drop-zone"),
-  sidebarFooter: document.querySelector(".sidebar-footer"),
   tagFilter: $("tag-filter"),
   sortAlpha: $("sort-alpha"),
   newFile: $("new-file"),
   newFolder: $("new-folder"),
   repositoryLabel: $("repository-label"),
-  brandButton: $("brand-button"),
-  brandPopover: $("brand-popover"),
-  repoLink: $("repo-link"),
   windowMinimize: $("window-minimize"),
   windowMaximize: $("window-maximize"),
   windowClose: $("window-close"),
@@ -93,6 +114,7 @@ const els = {
   sidebar: document.querySelector(".sidebar"),
   editorPane: $("editor-pane"),
   fileName: $("file-name"),
+  fileGlyph: $("file-glyph"),
   filePathTip: $("file-path-tip"),
   fileTags: $("file-tags"),
   wrapToggle: $("wrap-toggle"),
@@ -106,8 +128,15 @@ const els = {
   noticeText: $("notice-text"),
   noticeClose: $("notice-close"),
   appVersion: $("app-version"),
+  repoLink: $("repo-link"),
+  supportLink: $("support-link"),
+  toast: $("toast"),
   statusLeft: $("status-left"),
   statusRight: $("status-right"),
+  settingLayoutMenuTitlebar: $("setting-layout-menu-titlebar"),
+  settingLayoutStatusbar: $("setting-layout-statusbar"),
+  settingLayoutFileActions: $("setting-layout-file-actions"),
+  settingLayoutPreset: $("setting-layout-preset"),
   searchResults: $("search-results"),
   resultsList: $("results-list"),
   resultsEmpty: $("results-empty"),
@@ -151,6 +180,8 @@ const els = {
   settingsSaved: $("settings-saved"),
   settingsNoMatch: $("settings-no-match"),
   settingTheme: $("setting-theme"),
+  settingAccent: $("setting-accent"),
+  settingContentBackground: $("setting-content-background"),
   settingFontFamily: $("setting-font-family"),
   settingFontSize: $("setting-font-size"),
   settingTabWidth: $("setting-tab-width"),
@@ -158,9 +189,9 @@ const els = {
   settingRecentLimit: $("setting-recent-limit"),
   pinnedTitle: $("pinned-title"),
   recentTitle: $("recent-title"),
-  settingAutosaveMode: $("setting-autosave-mode"),
+  settingAutosaveEnabled: $("setting-autosave-enabled"),
   settingAutosaveIdle: $("setting-autosave-idle"),
-  settingAutosaveInterval: $("setting-autosave-interval"),
+  settingAutosaveUnit: $("setting-autosave-unit"),
   settingRevisionHourly: $("setting-revision-hourly"),
   settingRevisionDaily: $("setting-revision-daily"),
   settingRevisionWeekly: $("setting-revision-weekly"),
@@ -182,8 +213,6 @@ const els = {
   settingsFeatures: $("settings-features"),
   settingsSearchInfo: $("settings-search-info"),
   settingsSearchFeatureState: $("settings-search-feature-state"),
-  settingsZoomValue: $("settings-zoom-value"),
-  resetEditorZoom: $("reset-editor-zoom"),
   searchRescan: $("search-rescan"),
   maintenanceRescan: $("maintenance-rescan"),
   maintenanceClearRecents: $("maintenance-clear-recents"),
@@ -191,21 +220,55 @@ const els = {
   settingsAboutVersion: $("settings-about-version"),
   settingsAboutSource: $("settings-about-source"),
   settingsAboutGithub: $("settings-about-github"),
+  settingsAboutSupport: $("settings-about-support"),
   settingsError: $("settings-error"),
 };
 
-const SIDEBAR_MIN = 200;
+const SIDEBAR_MIN = 260;
 const SIDEBAR_MAX = 600;
-const SIDEBAR_DEFAULT = 292;
+const SIDEBAR_DEFAULT = 340;
 const SIDEBAR_STORAGE_KEY = "plainfold.sidebarWidth";
+const SIDEBAR_COLLAPSED_KEY = "plainfold.sidebarCollapsed";
+const WRAP_STORAGE_KEY = "plainfold.wrap";
 
 const ZOOM_MIN = 8;
 const ZOOM_MAX = 48;
-const ZOOM_STEP = 1;
-const ZOOM_STORAGE_KEY = "plainfold.zoom";
+
+const ACCENT_AREAS = [
+  "titlebar",
+  "fileHeader",
+  "statusbar",
+  "sidebar",
+  "controls",
+  "editor",
+];
+
+const ACCENT_AREA_ATTRIBUTES = {
+  titlebar: "accentTitlebar",
+  fileHeader: "accentFileheader",
+  statusbar: "accentStatusbar",
+  sidebar: "accentSidebar",
+  controls: "accentControls",
+  editor: "accentEditor",
+};
+
+const CONTENT_BACKGROUNDS = new Set([
+  "theme",
+  "white",
+  "paper",
+  "gray",
+  "dark",
+  "black",
+]);
 
 const DEFAULT_SETTINGS = {
-  theme: "system",
+  theme: "white",
+  accent: "slate",
+  contentBackground: "theme",
+  accentAreas: [...ACCENT_AREAS],
+  layoutMenuTitlebar: true,
+  layoutStatusbar: false,
+  layoutFileActions: false,
   fontFamily: "Consolas",
   fontSize: 14,
   defaultSort: "name",
@@ -213,9 +276,8 @@ const DEFAULT_SETTINGS = {
   tabWidth: 4,
   pinnedLimit: 5,
   recentLimit: 5,
-  autosaveMode: "off",
+  autosaveEnabled: false,
   autosaveIdleSecs: 20,
-  autosaveIntervalSecs: 120,
   revisionHourly: 24,
   revisionDaily: 7,
   revisionWeekly: 4,
@@ -226,6 +288,9 @@ const DEFAULT_SETTINGS = {
   recentRepositories: [],
   lastRepository: null,
   recentRepositoryLimit: 8,
+  colorIcons: true,
+  colorRules: [],
+  colorOverrides: {},
 };
 
 const state = {
@@ -239,31 +304,37 @@ const state = {
   repository: null,
   tree: [],
   expanded: new Set(),
+  filterCollapsed: new Set(),
   selected: null,
   currentFile: null,
   editor: null,
   dirty: false,
-  wrap: false,
+  // Word wrap is on unless the owner has turned it off; the choice is kept in
+  // localStorage so it survives a restart without a settings migration.
+  wrap: readWrapSetting(),
   tags: new Map(),
   tagCounts: [],
   pins: [],
   recents: [],
   tagFilter: null,
   fileFilter: "",
+  homeFilter: "all",
+  sidebarCollapsed: false,
   searchTimer: null,
   searchSequence: 0,
   dragSource: null,
   settingsDraftRepository: null,
-  dark: false,
+  theme: "light",
   saving: false,
   moving: false,
   autosaveTimer: null,
   autosavePaused: false,
   sidebarWidth: SIDEBAR_DEFAULT,
   menuReturnFocus: null,
+  openMenu: null,
+  menuWasEditorFocused: false,
+  menuFocusCaptured: false,
   pendingTreeFocus: null,
-  // Editor zoom in pixels. Null follows the font size from Settings.
-  zoom: null,
   // Text of the open file on disk, restored when an edit is undone.
   diskContent: null,
   statusTimer: null,
@@ -277,6 +348,7 @@ const state = {
   settingsSaveChain: Promise.resolve(),
   settingsDirty: false,
   settingsRevision: 0,
+  editorZoomTimer: null,
   settingsSaveFailed: false,
   settingsClosing: false,
   settingsSection: "appearance",
@@ -333,12 +405,12 @@ function applyFeatureVisibility() {
   ) {
     hideResults();
   }
-  if (!featureOn("about") || !featureOn("about.brand")) hideBrandPopover();
   if (!featureOn("tags") || !featureOn("tags.filterBar")) {
     state.tagFilter = null;
   }
   if (!featureOn("treeFilter") || !featureOn("treeFilter.input")) {
     state.fileFilter = "";
+    state.filterCollapsed.clear();
     if (els.treeFilter) els.treeFilter.value = "";
   }
   state.editor?.setSyntaxHighlighting?.(featureOn("syntaxHighlighting.editor"));
@@ -374,13 +446,18 @@ function errText(error) {
   return "The operation could not be completed.";
 }
 
-/** Errors flash in the centre of the status bar, then clear. */
+/** Errors appear in a bottom-right toast, then clear. */
 function setStatus(text) {
   els.statusMessage.textContent = text ?? "";
   els.statusMessage.hidden = !text;
+  if (els.toast) {
+    els.toast.textContent = text ?? "";
+    els.toast.hidden = !text;
+  }
   clearTimeout(state.statusTimer);
   state.statusTimer = setTimeout(() => {
     els.statusMessage.hidden = true;
+    if (els.toast) els.toast.hidden = true;
   }, 4000);
 }
 
@@ -389,45 +466,172 @@ function setStatus(text) {
  * the workspace while the backend scans. The browser only paints when the
  * main thread is idle, hence the yield before each backend call below.
  */
+let repositoryLoadingShownAt = 0;
+let repositoryLoadingTimer = 0;
+
 function showRepositoryLoading(label, copy = "") {
+  clearTimeout(repositoryLoadingTimer);
+  repositoryLoadingTimer = 0;
   els.repoLoadingTitle.textContent = label;
   els.repoLoadingCopy.textContent = copy;
   els.repoLoadingCopy.hidden = !copy;
   els.repoLoading.hidden = false;
   document.body.classList.add("repository-loading");
+  repositoryLoadingShownAt = performance.now();
 }
 
-function hideRepositoryLoading() {
+/** Delay the overlay briefly so quick launches do not flash it. */
+function scheduleRepositoryLoading(label, copy = "") {
+  clearTimeout(repositoryLoadingTimer);
+  repositoryLoadingTimer = setTimeout(() => showRepositoryLoading(label, copy), 150);
+}
+
+async function hideRepositoryLoading() {
+  clearTimeout(repositoryLoadingTimer);
+  repositoryLoadingTimer = 0;
+  if (els.repoLoading.hidden) return;
+  // Keep the centered message on screen long enough to read, even when the
+  // backend returns almost instantly.
+  const elapsed = performance.now() - repositoryLoadingShownAt;
+  if (elapsed < 700) {
+    await new Promise((resolve) => setTimeout(resolve, 700 - elapsed));
+  }
   els.repoLoading.hidden = true;
   document.body.classList.remove("repository-loading");
+  repositoryLoadingShownAt = 0;
 }
 
 function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
-/** Folders and files in the whole repository, shown at the bottom left. */
+/** Folders and files in the whole repository, shown on the Repository heading. */
 function updateStatusLeft() {
   if (!featureOn("repositoryCounts") || !featureOn("repositoryCounts.statusCounts")) {
     els.statusLeft.textContent = "";
+    if (els.repositoryLabel) els.repositoryLabel.title = "";
     return;
   }
   if (!state.repository) {
     els.statusLeft.textContent = "";
+    if (els.repositoryLabel) els.repositoryLabel.title = "";
     return;
   }
   const folders = countFolders(state.tree);
   const files = countFiles(state.tree);
-  els.statusLeft.textContent = `${formatCount(folders)} folder${folders === 1 ? "" : "s"} · ${formatCount(files)} file${files === 1 ? "" : "s"}`;
+  const text = `${formatCount(folders)} folder${folders === 1 ? "" : "s"} · ${formatCount(files)} file${files === 1 ? "" : "s"}`;
+  els.statusLeft.textContent = text;
+  if (els.repositoryLabel) {
+    els.repositoryLabel.title = `${state.repository.name}: ${text}`;
+  }
 }
 
-/** Words, characters, and size of the open file, shown at the bottom right. */
+/** Tree and header glyph families, keyed by lower-case extension. */
+const FILE_KIND_BY_EXTENSION = {
+  md: "markdown",
+  markdown: "markdown",
+  mdx: "markdown",
+  txt: "text",
+  text: "text",
+  log: "text",
+  js: "code",
+  mjs: "code",
+  cjs: "code",
+  jsx: "code",
+  ts: "code",
+  tsx: "code",
+  py: "code",
+  rb: "code",
+  go: "code",
+  rs: "code",
+  java: "code",
+  kt: "code",
+  kts: "code",
+  c: "code",
+  h: "code",
+  cpp: "code",
+  hpp: "code",
+  cc: "code",
+  cs: "code",
+  php: "code",
+  swift: "code",
+  lua: "code",
+  json: "json",
+  jsonc: "json",
+  json5: "json",
+  css: "style",
+  scss: "style",
+  sass: "style",
+  less: "style",
+  styl: "style",
+  html: "html",
+  htm: "html",
+  vue: "html",
+  svelte: "html",
+  xml: "xml",
+  svg: "xml",
+  yml: "config",
+  yaml: "config",
+  toml: "config",
+  ini: "config",
+  conf: "config",
+  cfg: "config",
+  env: "config",
+  properties: "config",
+  sh: "shell",
+  bash: "shell",
+  zsh: "shell",
+  fish: "shell",
+  ps1: "shell",
+  bat: "shell",
+  cmd: "shell",
+  sql: "database",
+  db: "database",
+  sqlite: "database",
+  csv: "table",
+  tsv: "table",
+  png: "image",
+  jpg: "image",
+  jpeg: "image",
+  gif: "image",
+  webp: "image",
+  bmp: "image",
+  ico: "image",
+  avif: "image",
+  pdf: "pdf",
+  doc: "document",
+  docx: "document",
+  odt: "document",
+  rtf: "document",
+};
+
+function fileKind(path) {
+  const name = basename(path).toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  return (
+    FILE_KIND_BY_EXTENSION[extension] ??
+    (extension || name.startsWith(".") ? "config" : "text")
+  );
+}
+
+/** Point a glyph at the icon for this path, or clear it when no file is open. */
+function setFileGlyph(element, path) {
+  if (!element) return;
+  if (path) element.dataset.kind = fileKind(path);
+  else delete element.dataset.kind;
+}
+
+/** Words, characters, and size of the open file, shown in the filename tooltip. */
 function updateFileStats(content, size) {
   if (!featureOn("editorStats") || !featureOn("editorStats.statusWords")) {
     els.statusRight.textContent = "";
+    els.fileName.title = state.currentFile?.path ?? "";
     return;
   }
-  els.statusRight.textContent = statsText(content, size);
+  const text = statsText(content, size);
+  els.statusRight.textContent = text;
+  els.fileName.title = text;
 }
 
 function countWords(text) {
@@ -491,110 +695,144 @@ function fontValue(raw) {
 }
 
 /** Every theme the settings list offers. Only `system` follows the OS. */
-const THEMES = {
-  light: { dark: false },
-  dark: { dark: true },
-  sepia: { dark: false },
-  nord: { dark: true },
-  "solarized-light": { dark: false },
-  "solarized-dark": { dark: true },
-  midnight: { dark: true },
-  forest: { dark: true },
-};
+const THEMES = new Set([
+  "light",
+  "white",
+  "dark",
+  "sepia",
+  "nord",
+  "solarized-light",
+  "solarized-dark",
+  "midnight",
+  "forest",
+]);
+
+const DARK_THEMES = new Set(["dark", "nord", "solarized-dark", "midnight", "forest"]);
+
+const ACCENTS = new Set([
+  "theme",
+  "blue",
+  "teal",
+  "green",
+  "amber",
+  "orange",
+  "rose",
+  "violet",
+  "slate",
+]);
 
 function themeName() {
   const setting = state.settings.theme ?? "system";
   if (setting === "system") return media.matches ? "dark" : "light";
-  return THEMES[setting] ? setting : media.matches ? "dark" : "light";
+  return THEMES.has(setting) ? setting : media.matches ? "dark" : "light";
+}
+
+function accentName() {
+  const setting = state.settings.accent ?? "theme";
+  return ACCENTS.has(setting) ? setting : "theme";
+}
+
+function normalizeAccentAreas(value) {
+  const selected = new Set(
+    Array.isArray(value) ? value : DEFAULT_SETTINGS.accentAreas
+  );
+  return ACCENT_AREAS.filter((area) => selected.has(area));
+}
+
+function contentBackgroundName() {
+  const setting = state.settings.contentBackground ?? "theme";
+  return CONTENT_BACKGROUNDS.has(setting) ? setting : "theme";
+}
+
+function contentBackgroundIsDark() {
+  const background = contentBackgroundName();
+  if (background === "theme") return DARK_THEMES.has(themeName());
+  return background === "dark" || background === "black";
+}
+
+function editorThemeName() {
+  if (contentBackgroundName() === "theme") return state.theme;
+  return contentBackgroundIsDark() ? "dark" : "content-light";
 }
 
 function applyTheme() {
   const theme = themeName();
-  const dark = THEMES[theme]?.dark ?? false;
-  state.dark = dark;
+  const contentDark = contentBackgroundIsDark();
+  const areas = new Set(normalizeAccentAreas(state.settings.accentAreas));
+  state.theme = theme;
   document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.mode = DARK_THEMES.has(theme) ? "dark" : "light";
+  document.documentElement.dataset.accent = accentName();
+  document.documentElement.dataset.content = contentBackgroundName();
+  document.documentElement.dataset.contentMode = contentDark ? "dark" : "light";
+  for (const area of ACCENT_AREAS) {
+    document.documentElement.dataset[ACCENT_AREA_ATTRIBUTES[area]] = areas.has(area)
+      ? "on"
+      : "off";
+  }
   document.documentElement.style.setProperty(
     "--editor-font",
     `${fontValue(state.settings.fontFamily)}, "DejaVu Sans Mono", monospace`
   );
-  applyZoom();
-  state.editor?.setTheme(dark);
+  applyLayout();
+  applyEditorSize();
+  state.editor?.setTheme(editorThemeName());
+}
+
+/** Desktop chrome can be dialed back to the menu-first layout. */
+function applyLayout() {
+  const menuTitlebar = state.settings.layoutMenuTitlebar !== false;
+  const statusbar = Boolean(state.settings.layoutStatusbar);
+  const fileActions = Boolean(state.settings.layoutFileActions);
+  document.documentElement.dataset.menuTitlebar = menuTitlebar ? "on" : "off";
+  document.documentElement.dataset.statusbar = statusbar ? "on" : "off";
+  document.documentElement.dataset.fileActions = fileActions ? "on" : "off";
+  if (!menuTitlebar) closeMenus();
 }
 
 function clampZoom(value) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value)));
 }
 
-/** The size the editor actually uses: the zoom level when set, otherwise
- *  the font size from Settings. */
+/** The size the editor uses, from the font size in Settings. */
 function editorFontSize() {
-  return state.zoom ?? clampZoom(Number(state.settings.fontSize) || 14);
+  return clampZoom(Number(state.settings.fontSize) || 14);
 }
 
-function applyZoom() {
+/** Ctrl+wheel is the webview's own window zoom, so nothing here reacts to
+ *  the wheel; this only keeps the editor text at the Settings size. */
+function applyEditorSize() {
   document.documentElement.style.setProperty(
     "--editor-size",
     `${editorFontSize()}px`
   );
 }
 
-function loadZoom() {
-  try {
-    const value = Number(localStorage.getItem(ZOOM_STORAGE_KEY));
-    if (Number.isFinite(value) && value >= ZOOM_MIN && value <= ZOOM_MAX) {
-      return clampZoom(value);
-    }
-  } catch {
-    return null;
-  }
-  return null;
+/**
+ * Editor zoom is its own axis: it only changes the text size in the editor
+ * pane, so the window chrome keeps whatever UI zoom the webview has.
+ */
+function setEditorZoom(nextSize) {
+  const size = clampZoom(nextSize);
+  if (size === editorFontSize()) return;
+  state.settings.fontSize = size;
+  applyEditorSize();
+  if (els.settingFontSize) els.settingFontSize.value = String(size);
+  state.settingsDirty = true;
+  state.settingsRevision += 1;
+  clearTimeout(state.editorZoomTimer);
+  state.editorZoomTimer = setTimeout(() => {
+    state.editorZoomTimer = null;
+    saveSettingsNow();
+  }, 350);
 }
 
-function saveZoom() {
-  try {
-    if (state.zoom === null) localStorage.removeItem(ZOOM_STORAGE_KEY);
-    else localStorage.setItem(ZOOM_STORAGE_KEY, String(state.zoom));
-  } catch {
-    return;
-  }
-}
-
-/** Drop the zoom level so the font size from Settings applies again. */
-function resetZoom() {
-  if (!featureOn("zoom") || !featureOn("zoom.resetShortcut")) return;
-  if (state.zoom === null) return;
-  state.zoom = null;
-  applyZoom();
-  saveZoom();
-  setStatus("Zoom reset to the size set in Settings.");
-  refreshSettingsDynamic();
-}
-
-/** Zoom by whole steps, keeping the caret visible. */
-function zoomBy(delta) {
-  if (!featureOn("zoom") || !featureOn("zoom.wheel")) return;
-  const next = clampZoom(editorFontSize() + delta * ZOOM_STEP);
-  if (next === editorFontSize()) return;
-  state.zoom = next;
-  applyZoom();
-  saveZoom();
-  setStatus(`Zoom ${next}px. Ctrl+wheel to change, Ctrl+0 to reset.`);
-  refreshSettingsDynamic();
-}
-
-/** Ctrl+wheel is the familiar Notepad gesture. Only the editor reacts; the
- *  rest of the window keeps its normal scrolling. */
-function wireZoom(element) {
-  element.addEventListener(
-    "wheel",
-    (event) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      if (!featureOn("zoom") || !featureOn("zoom.wheel")) return;
-      event.preventDefault();
-      zoomBy(event.deltaY < 0 ? 1 : -1);
-    },
-    { passive: false }
-  );
+function handleEditorWheel(event) {
+  if (!(event.ctrlKey || event.metaKey)) return;
+  if (!state.currentFile || !els.editor?.contains(event.target)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  setEditorZoom(editorFontSize() + (event.deltaY < 0 ? 1 : -1));
 }
 
 function applySettings(next) {
@@ -605,6 +843,8 @@ function applySettings(next) {
   state.settings.recentRepositories = Array.isArray(state.settings.recentRepositories)
     ? [...state.settings.recentRepositories]
     : [];
+  state.settings.accentAreas = normalizeAccentAreas(state.settings.accentAreas);
+  Object.assign(state.settings, normalizeColorSettings(state.settings));
   state.recentRepositoryEntries = reconcileRepositoryEntries(
     state.recentRepositoryEntries,
     state.settings.recentRepositories
@@ -615,11 +855,28 @@ function applySettings(next) {
   clearAutosave();
   scheduleAutosave();
   applyFeatureVisibility();
+  applySectionColors();
   renderShortLists();
   renderTree();
   renderRepositorySkeletons();
   refreshSettingsDynamic();
   syncFeatureSwitches();
+}
+
+function readWrapSetting() {
+  try {
+    return localStorage.getItem(WRAP_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function writeWrapSetting(enabled) {
+  try {
+    localStorage.setItem(WRAP_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    return;
+  }
 }
 
 function loadSidebarWidth() {
@@ -650,25 +907,26 @@ function saveSidebarWidth() {
   }
 }
 
+function applySidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = Boolean(collapsed);
+  document.documentElement.dataset.sidebarCollapsed = state.sidebarCollapsed ? "on" : "off";
+  els.sidebarToggle?.setAttribute("aria-pressed", String(state.sidebarCollapsed));
+  els.sidebarToggle?.setAttribute(
+    "title",
+    state.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"
+  );
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, state.sidebarCollapsed ? "1" : "0");
+  } catch {
+    return;
+  }
+}
+
 function updateControls() {
   const hasRepository = Boolean(state.repository);
   const hasFile = Boolean(state.currentFile);
   els.search.disabled =
     !hasRepository || !featureOn("search") || !featureOn("search.toolbar");
-  const undoLabel = state.undoInfo.undoLabel;
-  els.undoButton.disabled =
-    !hasRepository ||
-    state.undoBusy ||
-    !featureOn("repositoryUndo") ||
-    !featureOn("repositoryUndo.buttons");
-  els.undoButton.title = undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : "Nothing to undo";
-  const redoLabel = state.undoInfo.redoLabel;
-  els.redoButton.disabled =
-    !hasRepository ||
-    state.undoBusy ||
-    !featureOn("repositoryUndo") ||
-    !featureOn("repositoryUndo.buttons");
-  els.redoButton.title = redoLabel ? `Redo ${redoLabel} (Ctrl+Y)` : "Nothing to redo";
   els.treeFilter.disabled =
     !hasRepository || !featureOn("treeFilter") || !featureOn("treeFilter.input");
   els.sortAlpha.disabled =
@@ -677,11 +935,25 @@ function updateControls() {
     !hasRepository || !featureOn("createDelete") || !featureOn("createDelete.newFile");
   els.newFolder.disabled =
     !hasRepository || !featureOn("createDelete") || !featureOn("createDelete.newFolder");
-  els.wrapToggle.disabled =
-    !hasFile || !featureOn("wrap") || !featureOn("wrap.toggle");
+  const wrapAvailable = hasFile && featureOn("wrap") && featureOn("wrap.toggle");
+  els.wrapToggle.disabled = !wrapAvailable;
   els.saveButton.disabled = !hasFile || state.currentFile?.readOnly || !state.dirty;
   els.saveButton.title = state.currentFile?.readOnly ? "This file is read-only" : "Save (Ctrl+S)";
   els.closeFile.hidden = !hasFile;
+  if (els.menuSave) {
+    els.menuSave.disabled = !hasFile || state.currentFile?.readOnly || !state.dirty;
+    els.menuSave.title = state.currentFile?.readOnly
+      ? "This file is read-only"
+      : !hasFile
+        ? "No file is open"
+        : "Save the open file (Ctrl+S)";
+  }
+  if (els.menuCloseFile) els.menuCloseFile.disabled = !hasFile;
+  if (els.menuWrap) {
+    els.menuWrap.disabled = !wrapAvailable;
+    els.menuWrap.setAttribute("aria-checked", String(Boolean(state.wrap)));
+  }
+  refreshMenuState();
   if (els.maintenanceRescan) {
     els.maintenanceRescan.disabled = !hasRepository;
   }
@@ -695,31 +967,82 @@ function updateControls() {
   }
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   els.tree.classList.toggle("filtered", filtered);
+  placeSearchField(hasFile);
   if (!hasRepository) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
-    els.emptyTitle.textContent = "Plain text, plain files.";
+    els.emptyTitle.textContent = "Welcome";
     els.emptyCopy.textContent =
-      "Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.";
-    els.emptyOpen.textContent = "Open a folder";
-    els.emptyOpen.disabled = false;
-    els.emptyOpen.title = "";
+      "No files yet. Files in your repository appear here.";
+    setEmptyAction("Open repository", false, "");
   } else if (!hasFile) {
     els.emptyState.hidden = false;
     els.editorPane.hidden = true;
-    els.emptyTitle.textContent = "Choose a file.";
+    els.emptyTitle.textContent = "Files";
     els.emptyCopy.textContent =
-      "Select a file in the repository, or create one. Files are opened as plain text, never rendered.";
-    els.emptyOpen.textContent = "New file";
+      homeEmptyCopy();
     const canCreateEmpty = featureOn("createDelete") && featureOn("createDelete.emptyNewFile");
-    els.emptyOpen.disabled = !canCreateEmpty;
-    els.emptyOpen.title = canCreateEmpty
+    setEmptyAction("New file", !canCreateEmpty, canCreateEmpty
       ? "Create a file in the selected folder"
-      : "New file is turned off. It can be restored under Settings > Features.";
+      : "New file is turned off. It can be restored under Settings > Features.");
   } else {
     els.emptyState.hidden = true;
     els.emptyOpen.disabled = false;
     els.emptyOpen.title = "";
+  }
+  syncHomeFilterControls();
+}
+
+function homeEmptyCopy() {
+  if (state.homeFilter === "pinned") {
+    return "No pinned files yet. Pin a file to see it here.";
+  }
+  if (state.homeFilter === "recent") {
+    return "No recent files yet. Files you open will appear here.";
+  }
+  return "Choose a file from the sidebar to begin editing.";
+}
+
+function placeSearchField(editing) {
+  const field = els.search?.closest(".sidebar-search");
+  const target = editing ? els.sidebarSearchSlot : els.contentSearchSlot;
+  if (!field || !target || field.parentElement === target) return;
+  target.append(field);
+}
+
+function setEmptyAction(label, disabled, title) {
+  els.emptyOpen.disabled = disabled;
+  els.emptyOpen.title = title;
+  els.emptyOpen.querySelector("span").textContent = label;
+  if (els.emptySecondary) {
+    els.emptySecondary.textContent = label;
+    els.emptySecondary.disabled = disabled;
+    els.emptySecondary.title = title;
+  }
+}
+
+function syncHomeFilterControls() {
+  for (const control of document.querySelectorAll("[data-home-filter]")) {
+    const active = control.dataset.homeFilter === state.homeFilter;
+    control.classList.toggle("is-active", active);
+    if (control.classList.contains("content-tab")) {
+      control.setAttribute("aria-selected", String(active));
+      control.removeAttribute("aria-pressed");
+    } else {
+      control.setAttribute("aria-pressed", String(active));
+      control.removeAttribute("aria-selected");
+    }
+  }
+}
+
+function setHomeFilter(filter) {
+  if (!["all", "pinned", "recent"].includes(filter)) return;
+  state.homeFilter = filter;
+  if (state.repository) {
+    renderTree();
+    updateControls();
+  } else {
+    syncHomeFilterControls();
   }
 }
 
@@ -783,8 +1106,8 @@ async function activateRepository(path, { checkPending = true } = {}) {
     }
   }
   try {
-    setStatus("Opening repository…");
-    showRepositoryLoading(`Opening ${repositoryName(path)}`, "Reading the folder and its files.");
+    setStatus("Loading repository…");
+    showRepositoryLoading("Loading repository", `Reading ${repositoryName(path)}…`);
     await nextFrame();
     const snapshot = await api.openRepository(path);
     applySnapshot(snapshot);
@@ -797,7 +1120,7 @@ async function activateRepository(path, { checkPending = true } = {}) {
     setNotice(errText(error), "warn");
     return false;
   } finally {
-    hideRepositoryLoading();
+    await hideRepositoryLoading();
   }
 }
 
@@ -839,6 +1162,7 @@ function applySnapshot(snapshot) {
     state.settings.lastRepository = snapshot.lastRepository;
   }
   state.savedSettings = { ...state.settings };
+  Object.assign(state.settings, normalizeColorSettings(state.settings));
   state.settingsDraftFeatures = new Set(state.settings.disabledFeatures);
   state.searchIndexMessage = "";
   state.version = snapshot.version ?? "";
@@ -851,9 +1175,11 @@ function applySnapshot(snapshot) {
   state.repository = snapshot.repository;
   state.tree = snapshot.tree ?? [];
   state.expanded = new Set();
+  state.filterCollapsed = new Set();
   state.selected = null;
   state.tagFilter = null;
   state.fileFilter = "";
+  state.homeFilter = "all";
   state.tags = new Map();
   state.tagCounts = [];
   state.pins = [];
@@ -871,6 +1197,8 @@ function applySnapshot(snapshot) {
   renderRepositorySkeletons();
   renderTagFilter();
   refreshSettingsDynamic();
+  syncSettingsFields();
+  applySectionColors();
   updateControls();
   updateStatusLeft();
   updateTitle();
@@ -1004,6 +1332,13 @@ function configureRepositoryService() {
       return api.removeRecentRepository(path);
     },
     setStatus,
+    decorateRepository: (button, name, entry) =>
+      decorateRepository(button, name, entry.path),
+    onRepositoryContextMenu: (event, entry) =>
+      openColorContextMenu(event, {
+        repositoryPath: entry.path,
+        repositoryName: entry.name,
+      }),
     elements: {
       sidebar: els.repositoryList,
       welcome: els.welcomeRepositories,
@@ -1039,6 +1374,7 @@ function renderShortList(element, paths, emptyText, source) {
     button.type = "button";
     button.textContent = basename(path);
     button.title = path;
+    decorateLabel(button, path);
     button.addEventListener("click", () => openFile(path));
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -1093,6 +1429,7 @@ function renderTagFilter() {
       } else {
         state.tagFilter = tag;
       }
+      state.filterCollapsed.clear();
       renderTagFilter();
       renderTree();
       updateControls();
@@ -1103,6 +1440,10 @@ function renderTagFilter() {
 
 function treeForDisplay() {
   let display = state.tree;
+  if (state.homeFilter === "pinned" || state.homeFilter === "recent") {
+    const paths = state.homeFilter === "pinned" ? state.pins : state.recents;
+    display = filterTree(display, new Set(paths));
+  }
   if (state.tagFilter) {
     const needle = state.tagFilter.toLowerCase();
     const matching = new Set();
@@ -1136,7 +1477,11 @@ function renderTree() {
     ? "No files carry this tag."
     : state.fileFilter
       ? "No items match this filter."
-      : "This repository is empty.";
+      : state.homeFilter === "pinned"
+        ? "No pinned files yet."
+        : state.homeFilter === "recent"
+          ? "No recent files yet."
+          : "This repository is empty.";
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   renderNodes(display, 0, filtered);
   const entries = [...els.tree.querySelectorAll(".tree-entry")];
@@ -1174,6 +1519,21 @@ function treeEntryList() {
   return [...els.tree.querySelectorAll(".tree-entry")];
 }
 
+function treeNodeExpanded(path, filtered) {
+  if (!filtered) return state.expanded.has(path);
+  return !state.filterCollapsed.has(path);
+}
+
+function setTreeNodeExpanded(path, expanded, filtered) {
+  if (!filtered) {
+    if (expanded) state.expanded.add(path);
+    else state.expanded.delete(path);
+    return;
+  }
+  if (expanded) state.filterCollapsed.delete(path);
+  else state.filterCollapsed.add(path);
+}
+
 function handleTreeKeydown(event) {
   const entry = event.target.closest?.(".tree-entry");
   if (!entry) return;
@@ -1181,6 +1541,7 @@ function handleTreeKeydown(event) {
   const index = entries.indexOf(entry);
   if (index < 0) return;
   const node = findNode(state.tree, entry.dataset.path);
+  const filtered = Boolean(state.tagFilter || state.fileFilter);
   const focusAt = (nextIndex) => {
     const next = entries[nextIndex];
     if (!next) return;
@@ -1211,8 +1572,8 @@ function handleTreeKeydown(event) {
     case "ArrowRight":
       if (node?.isDir) {
         event.preventDefault();
-        if (!state.expanded.has(node.path)) {
-          state.expanded.add(node.path);
+        if (!treeNodeExpanded(node.path, filtered)) {
+          setTreeNodeExpanded(node.path, true, filtered);
           state.pendingTreeFocus = node.path;
           renderTree();
         } else if (entries[index + 1]?.dataset.parent === node.path) {
@@ -1222,8 +1583,8 @@ function handleTreeKeydown(event) {
       break;
     case "ArrowLeft":
       event.preventDefault();
-      if (node?.isDir && state.expanded.has(node.path)) {
-        state.expanded.delete(node.path);
+      if (node?.isDir && treeNodeExpanded(node.path, filtered)) {
+        setTreeNodeExpanded(node.path, false, filtered);
         state.pendingTreeFocus = node.path;
         renderTree();
       } else {
@@ -1262,13 +1623,12 @@ function renderNodes(nodes, depth, filtered) {
     const disclosure = document.createElement("span");
     disclosure.className = "tree-disclosure";
     disclosure.setAttribute("aria-hidden", "true");
-    const expanded = filtered || state.expanded.has(node.path);
+    const expanded = treeNodeExpanded(node.path, filtered);
     if (node.isDir) {
-      disclosure.textContent = expanded ? "▾" : "▸";
+      disclosure.classList.add(expanded ? "expanded" : "collapsed");
       disclosure.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (state.expanded.has(node.path)) state.expanded.delete(node.path);
-        else state.expanded.add(node.path);
+        setTreeNodeExpanded(node.path, !expanded, filtered);
         state.pendingTreeFocus = node.path;
         renderTree();
       });
@@ -1293,10 +1653,12 @@ function renderNodes(nodes, depth, filtered) {
     const glyph = document.createElement("span");
     glyph.className = node.isDir ? "folder-glyph" : "file-glyph";
     glyph.setAttribute("aria-hidden", "true");
+    if (!node.isDir) setFileGlyph(glyph, node.path);
     const name = document.createElement("span");
     name.className = "tree-name";
     name.textContent = node.name;
     entry.append(glyph, name);
+    decorateTreeEntry(glyph, name, node.path, node.isDir);
     if (node.isSymlink) {
       const kind = document.createElement("span");
       kind.className = "tree-kind";
@@ -1306,8 +1668,7 @@ function renderNodes(nodes, depth, filtered) {
     entry.addEventListener("click", () => {
       state.selected = node.path;
       if (node.isDir) {
-        if (state.expanded.has(node.path)) state.expanded.delete(node.path);
-        else state.expanded.add(node.path);
+        setTreeNodeExpanded(node.path, !expanded, filtered);
         state.pendingTreeFocus = node.path;
         renderTree();
       } else {
@@ -1348,7 +1709,6 @@ function renderNodes(nodes, depth, filtered) {
       });
       els.tree.classList.remove("drop-root");
       els.rootDropZone.classList.remove("drop-root");
-      els.sidebarFooter.classList.remove("drop-root");
       els.rootDropZone.hidden = true;
     };
     row.addEventListener("dragend", () => {
@@ -1608,6 +1968,15 @@ function showContextMenu(x, y, node, source = null) {
     }
   }
 
+  if (node) {
+    separator();
+    appendColorMenu(
+      els.contextMenu,
+      { path: node.path, isDir: node.isDir },
+      { setStatus }
+    );
+  }
+
   if (!els.contextMenu.querySelector("button")) {
     els.contextMenu.hidden = true;
     els.contextMenu.textContent = "";
@@ -1643,6 +2012,8 @@ function showFileContextMenu(x, y) {
     add("Show revisions…", () => showRevisions(path));
   }
   add("Copy full path", () => copyText(state.repository ? `${state.repository.path}\\${path.replaceAll("/", "\\")}` : path));
+  els.contextMenu.append(document.createElement("hr"));
+  appendColorMenu(els.contextMenu, { path, isDir: false }, { setStatus });
   els.contextMenu.hidden = false;
   const rect = els.contextMenu.getBoundingClientRect();
   const left = Math.min(x, window.innerWidth - rect.width - 8);
@@ -1661,22 +2032,259 @@ async function copyText(text) {
   }
 }
 
-function toggleBrandPopover() {
-  if (!featureOn("about") || !featureOn("about.brand")) return;
-  if (els.brandPopover.hidden) {
-    els.brandPopover.hidden = false;
-    els.brandButton.setAttribute("aria-expanded", "true");
-  } else {
-    hideBrandPopover();
+function appMenuRoots() {
+  return [
+    { trigger: els.menuApplication, panel: els.applicationMenu },
+    { trigger: els.menuEdit, panel: els.editMenu },
+  ].filter((root) => root.trigger && root.panel);
+}
+
+function menuItems(panel) {
+  return [...panel.querySelectorAll(".menu-item:not(:disabled)")];
+}
+
+function openAppMenu(root, { focusFirst = false } = {}) {
+  if (!root || (root.trigger === els.menuEdit && !state.settings.layoutMenuTitlebar)) {
+    return;
+  }
+  if (root.panel.hidden === false) {
+    refreshMenuState();
+    return;
+  }
+  const switching = Boolean(state.openMenu);
+  const editorFocused = switching
+    ? state.menuWasEditorFocused
+    : state.menuFocusCaptured || (state.editor?.hasFocus() ?? false);
+  closeMenus();
+  state.menuFocusCaptured = false;
+  state.openMenu = root;
+  state.menuWasEditorFocused = editorFocused;
+  root.panel.hidden = false;
+  root.trigger.setAttribute("aria-expanded", "true");
+  refreshMenuState();
+  if (focusFirst) {
+    const first = menuItems(root.panel)[0];
+    first?.focus();
   }
 }
 
-function hideBrandPopover() {
-  els.brandPopover.hidden = true;
-  els.brandButton.setAttribute("aria-expanded", "false");
+function closeMenus({ restoreFocus = false } = {}) {
+  for (const root of appMenuRoots()) {
+    root.panel.hidden = true;
+    root.trigger.setAttribute("aria-expanded", "false");
+  }
+  const open = state.openMenu;
+  state.openMenu = null;
+  if (!restoreFocus) return;
+  if (state.menuWasEditorFocused && state.editor) {
+    state.editor.focus();
+  } else if (open?.trigger) {
+    open.trigger.focus();
+  }
+}
+
+function refreshMenuState() {
+  const panel = els.editMenu;
+  if (!panel) return;
+  const editor = state.editor;
+  const editorFocused = state.openMenu
+    ? state.menuWasEditorFocused
+    : (editor?.hasFocus() ?? false);
+  const selection = editor?.selection?.();
+  const hasSelection = Boolean(selection && selection.from !== selection.to);
+  const repoUndoEnabled =
+    featureOn("repositoryUndo") &&
+    featureOn("repositoryUndo.buttons") &&
+    Boolean(state.undoInfo.undoLabel) &&
+    !state.undoBusy;
+  const repoRedoEnabled =
+    featureOn("repositoryUndo") &&
+    featureOn("repositoryUndo.buttons") &&
+    Boolean(state.undoInfo.redoLabel) &&
+    !state.undoBusy;
+  const editorUndoEnabled = Boolean(editor && editorFocused && editor.canUndo());
+  const editorRedoEnabled = Boolean(editor && editorFocused && editor.canRedo());
+  const states = {
+    undo: editorUndoEnabled || repoUndoEnabled,
+    redo: editorRedoEnabled || repoRedoEnabled,
+    find: Boolean(editor || state.repository),
+    replace: Boolean(editor),
+    "find-files": Boolean(state.repository),
+    cut: Boolean(editor && hasSelection),
+    copy: Boolean(editor && hasSelection),
+    paste: Boolean(editor),
+    delete: Boolean(editor && hasSelection),
+    "select-all": Boolean(editor),
+  };
+  for (const [command, enabled] of Object.entries(states)) {
+    const item = panel.querySelector(`[data-edit-command="${command}"]`);
+    if (item) item.disabled = !enabled;
+  }
+  const undoItem = panel.querySelector('[data-edit-command="undo"]');
+  if (undoItem) {
+    undoItem.title = editorUndoEnabled
+      ? "Undo the last edit"
+      : state.undoInfo.undoLabel
+        ? `Undo ${state.undoInfo.undoLabel}`
+        : "Nothing to undo";
+  }
+  const redoItem = panel.querySelector('[data-edit-command="redo"]');
+  if (redoItem) {
+    redoItem.title = editorRedoEnabled
+      ? "Redo the last edit"
+      : state.undoInfo.redoLabel
+        ? `Redo ${state.undoInfo.redoLabel}`
+        : "Nothing to redo";
+  }
+}
+
+function runAppMenuCommand(command) {
+  switch (command) {
+    case "open-repository":
+      chooseRepository();
+      break;
+    case "save":
+      saveCurrent();
+      break;
+    case "close-file":
+      closeCurrentFile();
+      break;
+    case "settings":
+      openSettings();
+      break;
+    case "quit":
+      getCurrentWindow().close().catch(() => {});
+      break;
+  }
+}
+
+function runEditCommand(command) {
+  const editor = state.editor;
+  switch (command) {
+    case "undo":
+      if (state.menuWasEditorFocused && editor?.canUndo()) editor.undo();
+      else undo();
+      break;
+    case "redo":
+      if (state.menuWasEditorFocused && editor?.canRedo()) editor.redo();
+      else redo();
+      break;
+    case "find":
+      if (editor) editor.find();
+      else focusSearch();
+      break;
+    case "replace":
+      editor?.replace();
+      break;
+    case "find-files":
+      focusSearch();
+      break;
+    case "cut":
+      editor?.cut();
+      break;
+    case "copy":
+      editor?.copy();
+      break;
+    case "paste":
+      editor?.paste();
+      break;
+    case "delete":
+      editor?.deleteSelection();
+      break;
+    case "select-all":
+      editor?.selectAll();
+      break;
+    case "wrap":
+      toggleWrap();
+      break;
+  }
+  updateControls();
+}
+
+function switchAppMenu(root, direction) {
+  const roots = appMenuRoots();
+  const index = roots.indexOf(root);
+  if (index === -1) return;
+  const next = roots[(index + direction + roots.length) % roots.length];
+  openAppMenu(next, { focusFirst: true });
+}
+
+function wireMenus() {
+  for (const root of appMenuRoots()) {
+    const { trigger, panel } = root;
+    trigger.addEventListener("pointerdown", () => {
+      state.menuFocusCaptured = state.editor?.hasFocus() ?? false;
+      state.menuWasEditorFocused = state.menuFocusCaptured;
+    });
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!panel.hidden) {
+        closeMenus({ restoreFocus: true });
+        return;
+      }
+      openAppMenu(root);
+    });
+    trigger.addEventListener("pointerenter", () => {
+      if (state.openMenu && state.openMenu !== root) openAppMenu(root);
+    });
+    trigger.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (panel.hidden) openAppMenu(root, { focusFirst: true });
+        else menuItems(panel)[0]?.focus();
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        switchAppMenu(root, event.key === "ArrowLeft" ? -1 : 1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenus({ restoreFocus: true });
+      }
+    });
+    panel.addEventListener("click", (event) => {
+      const item = event.target.closest(".menu-item");
+      if (!item || item.disabled) return;
+      event.stopPropagation();
+      const editCommand = item.dataset.editCommand;
+      const appCommand = item.dataset.menuCommand;
+      closeMenus();
+      if (editCommand) runEditCommand(editCommand);
+      else if (appCommand) runAppMenuCommand(appCommand);
+    });
+    panel.addEventListener("keydown", (event) => {
+      const items = menuItems(panel);
+      const index = items.indexOf(document.activeElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        items[Math.min(items.length - 1, index + 1)]?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        items[Math.max(0, index - 1)]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        items[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        items[items.length - 1]?.focus();
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        switchAppMenu(root, event.key === "ArrowLeft" ? -1 : 1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenus({ restoreFocus: true });
+      } else if (event.key === "Tab") {
+        closeMenus();
+      }
+    });
+  }
+  document.addEventListener("click", (event) => {
+    if (!state.openMenu) return;
+    if (event.target.closest?.(".app-menu-bar")) return;
+    closeMenus();
+  });
 }
 
 function hideContextMenu() {
+  closeColorMenu();
   els.contextMenu.hidden = true;
   els.contextMenu.textContent = "";
   const returnFocus = state.menuReturnFocus;
@@ -1821,11 +2429,18 @@ function remapExpanded(oldPath, newPath) {
   state.expanded = next;
 }
 
+function colorFileName() {
+  if (!state.currentFile) return;
+  decorateTreeEntry(els.fileGlyph, els.fileName, state.currentFile.path, false);
+}
+
 function remapCurrentFile(oldPath, newPath) {
   if (!state.currentFile || !isPathWithin(state.currentFile.path, oldPath)) return;
   state.currentFile.path = `${newPath}${state.currentFile.path.slice(oldPath.length)}`;
   state.currentFile.name = basename(state.currentFile.path);
   els.fileName.textContent = state.currentFile.name;
+  setFileGlyph(els.fileGlyph, state.currentFile.path);
+  decorateTreeEntry(els.fileGlyph, els.fileName, state.currentFile.path, false);
   els.filePathTip.textContent = state.currentFile.path;
   els.filePathTip.title = parentOf(state.currentFile.path)
     ? `${parentOf(state.currentFile.path)}/`
@@ -2059,6 +2674,8 @@ function mountFile(file, line = null) {
   els.emptyState.hidden = true;
   els.editorPane.hidden = false;
   els.fileName.textContent = file.name;
+  setFileGlyph(els.fileGlyph, file.path);
+  decorateTreeEntry(els.fileGlyph, els.fileName, file.path, false);
   els.filePathTip.textContent = file.path;
   els.filePathTip.title = parentOf(file.path) ? `${parentOf(file.path)}/` : "";
   updateFileStats(file.content, file.size);
@@ -2077,11 +2694,12 @@ function mountFile(file, line = null) {
     readOnly: file.readOnly,
     wrap: state.wrap,
     tabWidth: state.settings.tabWidth,
-    dark: state.dark,
+    theme: editorThemeName(),
     syntaxHighlighting: featureOn("syntaxHighlighting.editor"),
     onChange: markDirty,
     onSave: saveCurrent,
-    onSearch: focusSearch,
+    onSearch: () => state.editor?.find(),
+    onFindFiles: focusSearch,
     onOpenLink: (path) => openFile(path),
     onUndo: undoFromShortcut,
     onRedo: redoFromShortcut,
@@ -2119,6 +2737,8 @@ function closeEditor({ silent = false } = {}) {
   els.editorPane.hidden = true;
   els.fileTags.textContent = "";
   els.fileName.textContent = "";
+  els.fileName.style.removeProperty("color");
+  setFileGlyph(els.fileGlyph, null);
   els.filePathTip.textContent = "";
   els.filePathTip.title = "";
   updateFileStats("", 0);
@@ -2138,34 +2758,20 @@ function clearAutosave() {
 function scheduleAutosave() {
   if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
-  if (
-    state.settings.autosaveMode === "interval" &&
-    state.autosaveTimer !== null
-  ) {
-    return;
-  }
+  if (!state.settings.autosaveEnabled) return;
   clearAutosave();
-  const mode = state.settings.autosaveMode;
-  if (mode === "idle") {
-    const seconds = Math.min(
-      60,
-      Math.max(1, Number(state.settings.autosaveIdleSecs) || 20)
-    );
-    state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
-  } else if (mode === "interval") {
-    const seconds = Math.min(
-      3600,
-      Math.max(120, Number(state.settings.autosaveIntervalSecs) || 120)
-    );
-    state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
-  }
+  const seconds = Math.min(
+    3600,
+    Math.max(1, Number(state.settings.autosaveIdleSecs) || 20)
+  );
+  state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
 }
 
 async function runAutosave() {
   state.autosaveTimer = null;
   if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
-  const saved = await saveCurrent();
+  const saved = await saveCurrent({ automatic: true });
   if (!saved && state.dirty) scheduleAutosave();
 }
 
@@ -2181,7 +2787,8 @@ function markDirty() {
   scheduleAutosave();
 }
 
-async function saveCurrent() {
+async function saveCurrent(options = {}) {
+  const automatic = options?.automatic === true;
   if (!state.currentFile) return false;
   if (state.currentFile.readOnly) {
     setStatus("This file is read-only.");
@@ -2218,7 +2825,7 @@ async function saveCurrent() {
     updateFileStats(state.editor?.getValue() ?? "", outcome.size);
     updateControls();
     updateTitle();
-    setStatus("Saved.");
+    setStatus(automatic ? "Saved automatically." : "Saved.");
     refreshUndoState();
     return true;
   } catch (error) {
@@ -2423,9 +3030,16 @@ async function syncEditorWithDisk(previousPath) {
 function toggleWrap() {
   if (!featureOn("wrap") || !featureOn("wrap.toggle")) return;
   state.wrap = !state.wrap;
+  writeWrapSetting(state.wrap);
+  syncWrapControls();
+  state.editor?.setWrap(state.wrap);
+}
+
+/** Keep the toolbar button and the Edit > Word Wrap check in step. */
+function syncWrapControls() {
   els.wrapToggle.textContent = state.wrap ? "Wrap on" : "Wrap off";
   els.wrapToggle.setAttribute("aria-pressed", String(state.wrap));
-  state.editor?.setWrap(state.wrap);
+  els.menuWrap?.setAttribute("aria-checked", String(state.wrap));
 }
 
 /* ------------------------------------------------------------------ */
@@ -2495,6 +3109,7 @@ function renderResults(hits) {
     const name = document.createElement("span");
     name.className = "result-name";
     name.textContent = basename(hit.path);
+    decorateLabel(name, hit.path);
     const path = document.createElement("span");
     path.className = "result-path";
     path.textContent = hit.path;
@@ -2627,14 +3242,15 @@ async function saveLimitFromForm() {
 
 const SETTING_ELEMENT_IDS = {
   theme: "setting-theme",
+  accent: "setting-accent",
+  contentBackground: "setting-content-background",
   fontFamily: "setting-font-family",
   fontSize: "setting-font-size",
   tabWidth: "setting-tab-width",
   pinnedLimit: "setting-pinned-limit",
   recentLimit: "setting-recent-limit",
-  autosaveMode: "setting-autosave-mode",
+  autosaveEnabled: "setting-autosave-enabled",
   autosaveIdleSecs: "setting-autosave-idle",
-  autosaveIntervalSecs: "setting-autosave-interval",
   revisionHourly: "setting-revision-hourly",
   revisionDaily: "setting-revision-daily",
   revisionWeekly: "setting-revision-weekly",
@@ -2653,15 +3269,27 @@ const SETTING_KEYS_BY_ELEMENT_ID = Object.freeze({
 
 const SETTINGS_SECTIONS = {
   appearance: {
-    fields: ["theme", "fontFamily", "fontSize"],
+    fields: [
+      "theme",
+      "accent",
+      "contentBackground",
+      "layoutMenuTitlebar",
+      "layoutStatusbar",
+      "layoutFileActions",
+      "fontFamily",
+      "fontSize",
+    ],
+    features: [],
+  },
+  colors: {
+    fields: ["colorIcons"],
     features: [],
   },
   editor: {
     fields: [
       "tabWidth",
-      "autosaveMode",
+      "autosaveEnabled",
       "autosaveIdleSecs",
-      "autosaveIntervalSecs",
       "revisionHourly",
       "revisionDaily",
       "revisionWeekly",
@@ -2785,12 +3413,60 @@ function clampSettingNumber(element, min, max, fallback, label, issues) {
   return value;
 }
 
+function selectedAccentAreas() {
+  const selected = [...document.querySelectorAll("[data-accent-area]")]
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.accentArea);
+  return normalizeAccentAreas(selected);
+}
+
+const AUTOSAVE_MAX_SECS = 3600;
+
+/** Split a stored delay into the friendliest whole number and unit. */
+function autosaveDelayParts(seconds) {
+  const total = Math.min(
+    AUTOSAVE_MAX_SECS,
+    Math.max(1, Math.round(Number(seconds) || 20))
+  );
+  if (total >= 60 && total % 60 === 0) {
+    return { amount: total / 60, unit: "minutes" };
+  }
+  return { amount: total, unit: "seconds" };
+}
+
+function syncAutosaveDelayFields(seconds) {
+  const { amount, unit } = autosaveDelayParts(seconds);
+  if (els.settingAutosaveIdle) els.settingAutosaveIdle.value = String(amount);
+  if (els.settingAutosaveUnit) els.settingAutosaveUnit.value = unit;
+}
+
+/** Read the delay fields and store the result as seconds. */
+function autosaveDelayFromForm(issues) {
+  const minutes = els.settingAutosaveUnit?.value === "minutes";
+  const max = minutes ? 60 : AUTOSAVE_MAX_SECS;
+  const amount = clampSettingNumber(
+    els.settingAutosaveIdle,
+    1,
+    max,
+    minutes ? 1 : 20,
+    minutes ? "Auto Save delay in minutes" : "Auto Save delay in seconds",
+    issues
+  );
+  return Math.min(AUTOSAVE_MAX_SECS, amount * (minutes ? 60 : 1));
+}
+
 /** Build a complete settings object from the current dialog fields. */
 function buildSettingsFromForm() {
   const issues = [];
 
   const settings = {
     theme: els.settingTheme?.value ?? "system",
+    accent: els.settingAccent?.value ?? "theme",
+    contentBackground: els.settingContentBackground?.value ?? "theme",
+    accentAreas: selectedAccentAreas(),
+    layoutMenuTitlebar: els.settingLayoutMenuTitlebar?.checked ?? true,
+    layoutStatusbar: Boolean(els.settingLayoutStatusbar?.checked),
+    layoutFileActions: Boolean(els.settingLayoutFileActions?.checked),
     fontFamily: els.settingFontFamily?.value.trim() || "Consolas",
     fontSize: clampSettingNumber(
       els.settingFontSize,
@@ -2817,23 +3493,8 @@ function buildSettingsFromForm() {
       "Recent limit",
       issues
     ),
-    autosaveMode: els.settingAutosaveMode?.value ?? "off",
-    autosaveIdleSecs: clampSettingNumber(
-      els.settingAutosaveIdle,
-      1,
-      60,
-      20,
-      "Autosave idle",
-      issues
-    ),
-    autosaveIntervalSecs: clampSettingNumber(
-      els.settingAutosaveInterval,
-      120,
-      3600,
-      120,
-      "Autosave interval",
-      issues
-    ),
+    autosaveEnabled: Boolean(els.settingAutosaveEnabled?.checked),
+    autosaveIdleSecs: autosaveDelayFromForm(issues),
     revisionHourly: clampSettingNumber(
       els.settingRevisionHourly,
       0,
@@ -2886,6 +3547,11 @@ function buildSettingsFromForm() {
     ),
     desktopShortcutPrompted: Boolean(state.settings.desktopShortcutPrompted),
     disabledFeatures: [...state.settingsDraftFeatures],
+    ...normalizeColorSettings({
+      colorIcons: state.settings.colorIcons,
+      colorRules: state.settings.colorRules,
+      colorOverrides: state.settings.colorOverrides,
+    }),
     // Server-managed fields are sent back exactly as they were received so a
     // save cannot erase the saved repository list.
     recentRepositories: Array.isArray(state.settings.recentRepositories)
@@ -2897,12 +3563,34 @@ function buildSettingsFromForm() {
   return { settings, issues };
 }
 
+function syncAccentAreaFields(value) {
+  const selected = new Set(normalizeAccentAreas(value));
+  for (const input of document.querySelectorAll("[data-accent-area]")) {
+    input.checked = selected.has(input.dataset.accentArea);
+  }
+}
+
 function syncSettingsFields(values = state.settings) {
   for (const [key, id] of Object.entries(SETTING_ELEMENT_IDS)) {
     const element = $(id);
     if (!element) continue;
     const value = values[key];
+    if (element.type === "checkbox") {
+      element.checked = Boolean(value);
+      continue;
+    }
     element.value = value === null || value === undefined ? "" : String(value);
+  }
+  syncAutosaveDelayFields(values.autosaveIdleSecs);
+  syncAccentAreaFields(values.accentAreas);
+  if (els.settingLayoutMenuTitlebar) {
+    els.settingLayoutMenuTitlebar.checked = values.layoutMenuTitlebar !== false;
+  }
+  if (els.settingLayoutStatusbar) {
+    els.settingLayoutStatusbar.checked = Boolean(values.layoutStatusbar);
+  }
+  if (els.settingLayoutFileActions) {
+    els.settingLayoutFileActions.checked = Boolean(values.layoutFileActions);
   }
   if (els.settingDefaultRepository) {
     els.settingDefaultRepository.value = state.settingsDraftRepository ?? "";
@@ -3202,10 +3890,6 @@ function applySettingsSearch() {
 }
 
 function refreshSettingsDynamic() {
-  if (els.settingsZoomValue) {
-    const zoomed = state.zoom !== null;
-    els.settingsZoomValue.textContent = `${editorFontSize()}px${zoomed ? " (manual zoom)" : ""}`;
-  }
   if (els.settingsSearchInfo) {
     if (!state.repository) {
       els.settingsSearchInfo.textContent =
@@ -3262,7 +3946,19 @@ function refreshSettingsDynamic() {
       ? `github.com/${UPDATE_OWNER}/${UPDATE_REPO}`
       : "Repository link not configured.";
   }
+  if (els.repoLink) {
+    els.repoLink.textContent = configured
+      ? `github.com/${UPDATE_OWNER}/${UPDATE_REPO}`
+      : "GitHub — coming soon";
+    els.repoLink.title = configured
+      ? `github.com/${UPDATE_OWNER}/${UPDATE_REPO}`
+      : "The GitHub repository link is not configured yet.";
+  }
+  if (els.appVersion) {
+    els.appVersion.textContent = state.version ? `Version ${state.version}` : "";
+  }
   renderSettingsRepositories();
+  renderColorSettings($("settings-colors"));
   syncFeatureSwitches();
 }
 
@@ -3278,10 +3974,6 @@ function openSettings() {
   state.settingsQuery = "";
   if (els.settingsSearch) els.settingsSearch.value = "";
   syncSettingsFields();
-  // Show the size actually in use, so a manual zoom is visible here too.
-  if (state.zoom !== null && els.settingFontSize) {
-    els.settingFontSize.value = String(editorFontSize());
-  }
   showSettingsError("");
   if (els.settingsSaved) els.settingsSaved.hidden = true;
   renderFeatures();
@@ -3354,16 +4046,10 @@ function saveSettingsNow() {
       const merged = mergeSettingsResponse(settings, saved);
       const pending = state.settingsRevision !== builtRevision;
       const pendingDraft = pending ? new Set(state.settingsDraftFeatures) : null;
-      const fontChanged = merged.fontSize !== state.settings.fontSize;
       state.savedSettings = merged;
       state.settingsDraftFeatures = new Set(
         Array.isArray(merged.disabledFeatures) ? merged.disabledFeatures : []
       );
-      if (fontChanged) {
-        // A saved font size takes over from any manual zoom.
-        state.zoom = null;
-        saveZoom();
-      }
       applySettings(merged);
       if (!pending) {
         state.settingsDraftRepository = merged.defaultRepository ?? null;
@@ -3412,6 +4098,15 @@ async function closeSettings() {
   }
 }
 
+function useDesktopMenuLayout() {
+  if (els.settingLayoutMenuTitlebar) els.settingLayoutMenuTitlebar.checked = true;
+  if (els.settingLayoutStatusbar) els.settingLayoutStatusbar.checked = false;
+  if (els.settingLayoutFileActions) els.settingLayoutFileActions.checked = false;
+  state.settingsDirty = true;
+  state.settingsRevision += 1;
+  saveSettingsNow();
+}
+
 function resetSettingsSection(sectionId) {
   const section = SETTINGS_SECTIONS[sectionId];
   if (!section) return;
@@ -3419,16 +4114,37 @@ function resetSettingsSection(sectionId) {
     const element = settingsElement(key);
     if (!element) continue;
     const value = DEFAULT_SETTINGS[key];
+    if (element.type === "checkbox") {
+      element.checked = Boolean(value);
+      continue;
+    }
     element.value = value === null || value === undefined ? "" : String(value);
   }
+  if (sectionId === "editor") {
+    syncAutosaveDelayFields(DEFAULT_SETTINGS.autosaveIdleSecs);
+  }
   if (sectionId === "appearance") {
-    state.zoom = null;
-    applyZoom();
-    saveZoom();
+    syncAccentAreaFields(DEFAULT_SETTINGS.accentAreas);
+    if (els.settingLayoutMenuTitlebar) {
+      els.settingLayoutMenuTitlebar.checked = DEFAULT_SETTINGS.layoutMenuTitlebar;
+    }
+    if (els.settingLayoutStatusbar) {
+      els.settingLayoutStatusbar.checked = DEFAULT_SETTINGS.layoutStatusbar;
+    }
+    if (els.settingLayoutFileActions) {
+      els.settingLayoutFileActions.checked = DEFAULT_SETTINGS.layoutFileActions;
+    }
   }
   if (sectionId === "repositories") {
     state.settingsDraftRepository = null;
     if (els.settingDefaultRepository) els.settingDefaultRepository.value = "";
+  }
+  if (sectionId === "colors") {
+    state.settings.colorIcons = DEFAULT_COLOR_SETTINGS.colorIcons;
+    state.settings.colorRules = [];
+    state.settings.colorOverrides = {};
+    applySectionColors();
+    renderTree();
   }
   for (const groupId of section.features) {
     state.settingsDraftFeatures.delete(groupId);
@@ -3455,9 +4171,9 @@ async function resetAllSettings() {
   state.settingsDraftFeatures = new Set();
   state.settings.disabledFeatures = [];
   state.settings.desktopShortcutPrompted = DEFAULT_SETTINGS.desktopShortcutPrompted;
-  state.zoom = null;
-  applyZoom();
-  saveZoom();
+  state.settings.colorIcons = DEFAULT_COLOR_SETTINGS.colorIcons;
+  state.settings.colorRules = [];
+  state.settings.colorOverrides = {};
   syncSettingsFields({
     ...DEFAULT_SETTINGS,
     recentRepositories: state.settings.recentRepositories,
@@ -3841,23 +4557,48 @@ function wireSettingsDialog() {
   });
 }
 
+/** Small context menu that only offers colors for a header or a repository row. */
+function openColorContextMenu(event, context) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeColorMenu();
+  els.contextMenu.textContent = "";
+  state.menuReturnFocus = document.activeElement;
+  appendColorMenu(els.contextMenu, context, { setStatus });
+  if (!els.contextMenu.querySelector("button")) return;
+  els.contextMenu.hidden = false;
+  const rect = els.contextMenu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+  els.contextMenu.style.left = `${Math.max(8, left)}px`;
+  els.contextMenu.style.top = `${Math.max(8, top)}px`;
+  els.contextMenu.querySelector("button")?.focus();
+}
+
 function wireEvents() {
   wirePaneResizer();
-  // The editor sits inside the pane, and wheel events bubble, so one
-  // listener on the pane covers the whole editing area.
-  wireZoom(els.editorPane);
-  els.openRepository.addEventListener("click", chooseRepository);
+  wireMenus();
   els.emptyOpen.addEventListener("click", () => {
     if (state.repository) createItem(targetFolder(), false, { fromEmpty: true });
     else chooseRepository();
   });
+  els.emptySecondary?.addEventListener("click", () => els.emptyOpen.click());
+  els.sidebarOpenRepository?.addEventListener("click", chooseRepository);
+  els.sidebarAddRepository?.addEventListener("click", chooseRepository);
+  els.sidebarMore?.addEventListener("click", openSettings);
+  els.sidebarToggle?.addEventListener("click", () => {
+    applySidebarCollapsed(!state.sidebarCollapsed);
+  });
+  for (const control of document.querySelectorAll("[data-home-filter]")) {
+    control.addEventListener("click", () => setHomeFilter(control.dataset.homeFilter));
+  }
 
   els.maintenanceRescan?.addEventListener("click", rebuildSearchIndex);
   els.searchRescan?.addEventListener("click", rebuildSearchIndex);
   els.maintenanceClearRecents?.addEventListener("click", clearRecentRepositories);
   els.maintenanceResetAll?.addEventListener("click", resetAllSettings);
   els.settingUpdateCheck?.addEventListener("click", checkUpdatesNow);
-  els.resetEditorZoom?.addEventListener("click", resetZoom);
+  els.settingLayoutPreset?.addEventListener("click", useDesktopMenuLayout);
   els.updateBannerDismiss?.addEventListener("click", () => {
     if (state.updateInfo.latestVersion) {
       dismissUpdate(state.updateInfo.latestVersion);
@@ -3877,11 +4618,39 @@ function wireEvents() {
     }
   });
 
-  els.settingsButton.addEventListener("click", openSettings);
+  for (const control of [els.supportLink, els.settingsAboutSupport]) {
+    control?.addEventListener("click", async () => {
+      try {
+        await api.openSupportPage();
+      } catch (error) {
+        setStatus(errText(error));
+      }
+    });
+  }
+
   els.settingsClose.addEventListener("click", closeSettings);
   wireSettingsDialog();
   els.pinnedTitle.addEventListener("click", () => openLimitDialog("pinned"));
   els.recentTitle.addEventListener("click", () => openLimitDialog("recent"));
+  for (const [element, section] of [
+    [els.repositoryLabel, "files"],
+    [els.pinnedTitle, "pinned"],
+    [els.recentTitle, "recent"],
+    [document.querySelector('.sidebar-nav-item[data-home-filter="all"]'), "files"],
+    [document.querySelector('.sidebar-nav-item[data-home-filter="pinned"]'), "pinned"],
+    [document.querySelector('.sidebar-nav-item[data-home-filter="recent"]'), "recent"],
+  ]) {
+    element?.addEventListener("contextmenu", (event) =>
+      openColorContextMenu(event, { section })
+    );
+  }
+  document
+    .getElementById("repositories-section")
+    ?.addEventListener("contextmenu", (event) => {
+      if (event.target.closest?.("button")) return;
+      if (!event.target.closest?.(".section-head")) return;
+      openColorContextMenu(event, { section: "repositories" });
+    });
   els.limitForm.addEventListener("submit", (event) => {
     event.preventDefault();
     saveLimitFromForm();
@@ -3927,12 +4696,14 @@ function wireEvents() {
   els.newFile.addEventListener("click", () => createItem(targetFolder(), false));
   els.newFolder.addEventListener("click", () => createItem(targetFolder(), true));
   els.wrapToggle.addEventListener("click", toggleWrap);
+  els.editor.addEventListener("wheel", handleEditorWheel, {
+    passive: false,
+    capture: true,
+  });
   els.saveButton.addEventListener("click", saveCurrent);
   els.closeFile.addEventListener("click", () => {
     closeCurrentFile();
   });
-  els.undoButton.addEventListener("click", undo);
-  els.redoButton.addEventListener("click", redo);
   els.noticeClose.addEventListener("click", dismissNotice);
 
   els.tree.addEventListener("contextmenu", (event) => {
@@ -3952,18 +4723,10 @@ function wireEvents() {
     event.preventDefault();
     showFileContextMenu(event.clientX, event.clientY);
   });
-  els.brandButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleBrandPopover();
-  });
-  document.addEventListener("click", (event) => {
-    if (els.brandPopover.hidden) return;
-    if (els.brandPopover.contains(event.target)) return;
-    hideBrandPopover();
-  });
   els.treeFilter.addEventListener("input", () => {
     if (!featureOn("treeFilter") || !featureOn("treeFilter.input")) return;
     state.fileFilter = els.treeFilter.value.trim();
+    state.filterCollapsed.clear();
     renderTree();
     updateControls();
   });
@@ -3971,13 +4734,13 @@ function wireEvents() {
     if (event.key === "Escape") {
       els.treeFilter.value = "";
       state.fileFilter = "";
+      state.filterCollapsed.clear();
       renderTree();
       updateControls();
     }
   });
   wireRootDrop(els.tree);
   wireRootDrop(els.rootDropZone);
-  wireRootDrop(els.sidebarFooter);
   wireRootDrop(els.treeEmpty);
 
   els.search.addEventListener("input", () => {
@@ -4008,6 +4771,13 @@ function wireEvents() {
     }
   });
   els.closeResults.addEventListener("click", hideResults);
+  const searchShell = els.search.closest(".sidebar-search");
+  window.addEventListener("pointerdown", (event) => {
+    if (els.searchResults.hidden) return;
+    if (searchShell?.contains(event.target)) return;
+    if (els.searchResults.contains(event.target)) return;
+    hideResults();
+  });
   els.resultsList.addEventListener("keydown", (event) => {
     const buttons = [...els.resultsList.querySelectorAll("button")];
     const index = buttons.indexOf(document.activeElement);
@@ -4053,9 +4823,41 @@ function wireEvents() {
         return;
       }
     }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      const key = event.key.toLowerCase();
+      if (key === "a") {
+        event.preventDefault();
+        openAppMenu(appMenuRoots()[0], { focusFirst: true });
+        return;
+      }
+      if (key === "e") {
+        event.preventDefault();
+        openAppMenu(appMenuRoots()[1], { focusFirst: true });
+        return;
+      }
+    }
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      event.shiftKey &&
+      event.key.toLowerCase() === "f"
+    ) {
       event.preventDefault();
       if (featureOn("search") && featureOn("search.shortcut")) focusSearch();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      if (state.editor?.hasFocus()) state.editor.find();
+      else if (featureOn("search") && featureOn("search.shortcut")) focusSearch();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "h") {
+      if (state.currentFile) {
+        event.preventDefault();
+        state.editor?.replace();
+      }
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      chooseRepository();
+    } else if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+      event.preventDefault();
+      openSettings();
     } else if (event.key === "Escape") {
       hideContextMenu();
       if (!els.searchResults.hidden) hideResults();
@@ -4102,10 +4904,6 @@ function wireEvents() {
         return;
       }
       redo();
-    } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
-      // Screen readers and browsers use Ctrl+0 for "actual size" too.
-      event.preventDefault();
-      if (featureOn("zoom") && featureOn("zoom.resetShortcut")) resetZoom();
     }
   });
   window.addEventListener("resize", hideContextMenu);
@@ -4242,15 +5040,36 @@ async function readDiskText(path) {
 }
 
 async function init() {
+  configureColors({
+    getSettings: () => state.settings,
+    getRepositories: () => state.recentRepositoryEntries,
+    basename,
+    onStatus: (message) => setStatus(message),
+    commit: () => {
+      if (!els.settingsDialog?.open) syncSettingsFields();
+      state.settingsDirty = true;
+      state.settingsRevision += 1;
+      saveSettingsNow();
+    },
+    onChange: () => {
+      applySectionColors();
+      renderShortLists();
+      renderTree();
+      colorFileName();
+      renderRepositorySkeletons();
+    },
+  });
   configureRepositoryService();
-  wireEvents();
-  state.zoom = loadZoom();
   applyTheme();
   applySidebarWidth(loadSidebarWidth());
+  applySidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
   applyFeatureVisibility();
+  syncWrapControls();
   updateControls();
   updateStatusLeft();
+  wireEvents();
   try {
+    scheduleRepositoryLoading("Loading repository", "Restoring your last repository…");
     const snapshot = await api.bootstrap();
     applySnapshot(snapshot);
     await refreshOrganization();
@@ -4266,6 +5085,8 @@ async function init() {
   } catch (error) {
     setStatus(errText(error));
     setNotice(errText(error), "warn");
+  } finally {
+    await hideRepositoryLoading();
   }
 }
 

@@ -38,9 +38,7 @@ pub fn validate_name(name: &str, windows: bool) -> AppResult<Vec<String>> {
     let mut segments = Vec::new();
     for segment in name.split('/') {
         if segment.is_empty() {
-            return Err(AppError::new(
-                "Names cannot contain an empty path segment.",
-            ));
+            return Err(AppError::new("Names cannot contain an empty path segment."));
         }
         if segment == "." || segment == ".." {
             return Err(AppError::new("Names cannot contain . or .. segments."));
@@ -64,9 +62,7 @@ fn validate_segment(segment: &str, windows: bool) -> AppResult<()> {
         return Err(AppError::new("Names cannot contain control characters."));
     }
     if segment.eq_ignore_ascii_case(REVISIONS_DIR) {
-        return Err(AppError::new(
-            "That name is reserved for revision history.",
-        ));
+        return Err(AppError::new("That name is reserved for revision history."));
     }
 
     if windows {
@@ -109,8 +105,13 @@ mod tests {
 
     #[test]
     fn rejects_invalid_characters() {
-        for bad in ["a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\\b", "a\tb"] {
-            assert!(validate_name(bad, true).is_err(), "{bad} should be rejected");
+        for bad in [
+            "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\\b", "a\tb",
+        ] {
+            assert!(
+                validate_name(bad, true).is_err(),
+                "{bad} should be rejected"
+            );
         }
     }
 
@@ -141,14 +142,11 @@ mod tests {
 
     #[test]
     fn windows_reserved_name_variants() {
-        for bad in [
-            "COM1.txt",
-            "lpt9.tar.gz",
-            "NUL.",
-            "aux ",
-            "a/COM2/b.txt",
-        ] {
-            assert!(validate_name(bad, true).is_err(), "{bad} should be rejected");
+        for bad in ["COM1.txt", "lpt9.tar.gz", "NUL.", "aux ", "a/COM2/b.txt"] {
+            assert!(
+                validate_name(bad, true).is_err(),
+                "{bad} should be rejected"
+            );
         }
         assert!(validate_name("COM0", true).is_ok());
         assert!(validate_name(".hidden", true).is_ok());

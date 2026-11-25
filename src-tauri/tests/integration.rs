@@ -7,9 +7,9 @@ use std::process::Command;
 
 use plainfold_lib::encoding::{Eol, TextEncoding, MAX_INDEX_BYTES};
 use plainfold_lib::index::Index;
-use plainfold_lib::tree::{build_tree, rescan_index, SortOrder};
-use plainfold_lib::repository::{create_item, delete_item, read_file, save_file};
 use plainfold_lib::paths::Repository;
+use plainfold_lib::repository::{create_item, delete_item, read_file, save_file};
+use plainfold_lib::tree::{build_tree, rescan_index, SortOrder};
 
 #[test]
 fn create_edit_save_and_verify_on_disk() {
@@ -18,7 +18,10 @@ fn create_edit_save_and_verify_on_disk() {
 
     let created = create_item(&repository, "", "notes/2026/day.txt", false).unwrap();
     assert_eq!(created.path, "notes/2026/day.txt");
-    assert_eq!(std::fs::read(dir.path().join("notes/2026/day.txt")).unwrap(), b"");
+    assert_eq!(
+        std::fs::read(dir.path().join("notes/2026/day.txt")).unwrap(),
+        b""
+    );
 
     let read = read_file(&repository, "notes/2026/day.txt").unwrap();
     let expected_default = if cfg!(windows) { Eol::Crlf } else { Eol::Lf };
@@ -45,7 +48,7 @@ fn create_edit_save_and_verify_on_disk() {
 
 #[test]
 fn undo_history_reverses_edits_creates_moves_and_deletes() {
-    use plainfold_lib::undo::{capture, restore, UndoAction, History};
+    use plainfold_lib::undo::{capture, restore, History, UndoAction};
 
     let dir = tempfile::tempdir().unwrap();
     let repository = Repository::open(dir.path()).unwrap();
@@ -63,7 +66,10 @@ fn undo_history_reverses_edits_creates_moves_and_deletes() {
             content: "first\n".to_string(),
         },
     );
-    assert_eq!(history.state().undo_label.as_deref(), Some("editing note.txt"));
+    assert_eq!(
+        history.state().undo_label.as_deref(),
+        Some("editing note.txt")
+    );
     save_file(&repository, "note.txt", "first\n", "utf-8", "lf").unwrap();
     assert_eq!(
         std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
@@ -99,11 +105,8 @@ fn undo_history_reverses_edits_creates_moves_and_deletes() {
 #[test]
 fn utf16_bom_and_crlf_survive_a_save() {
     let dir = tempfile::tempdir().unwrap();
-    let contents = plainfold_lib::encoding::encode(
-        "alpha\nbeta\n",
-        TextEncoding::Utf16Le,
-        Eol::Crlf,
-    );
+    let contents =
+        plainfold_lib::encoding::encode("alpha\nbeta\n", TextEncoding::Utf16Le, Eol::Crlf);
     std::fs::write(dir.path().join("wide.txt"), &contents).unwrap();
     let repository = Repository::open(dir.path()).unwrap();
     let read = read_file(&repository, "wide.txt").unwrap();
@@ -114,7 +117,10 @@ fn utf16_bom_and_crlf_survive_a_save() {
     let bytes = std::fs::read(dir.path().join("wide.txt")).unwrap();
     assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
     assert_eq!(
-        bytes[2..].chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect::<Vec<_>>(),
+        bytes[2..]
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect::<Vec<_>>(),
         "gamma\r\n".encode_utf16().collect::<Vec<_>>()
     );
 }
@@ -176,12 +182,18 @@ fn content_index_boundary_is_exactly_two_mib() {
     let mut under = String::from(prefix);
     under.push_str(&"a".repeat(LIMIT - 1 - prefix.len()));
     save_file(&repository, "under.txt", &under, "utf-8", "lf").unwrap();
-    assert_eq!(std::fs::metadata(root.join("under.txt")).unwrap().len(), (LIMIT - 1) as u64);
+    assert_eq!(
+        std::fs::metadata(root.join("under.txt")).unwrap().len(),
+        (LIMIT - 1) as u64
+    );
 
     let mut at_limit = String::from(prefix);
     at_limit.push_str(&"a".repeat(LIMIT - prefix.len()));
     save_file(&repository, "at-limit.txt", &at_limit, "utf-8", "lf").unwrap();
-    assert_eq!(std::fs::metadata(root.join("at-limit.txt")).unwrap().len(), LIMIT as u64);
+    assert_eq!(
+        std::fs::metadata(root.join("at-limit.txt")).unwrap().len(),
+        LIMIT as u64
+    );
 
     let mut index = Index::open(&dir.path().join("index.sqlite"), &root).unwrap();
     rescan_index(&mut index, &repository).unwrap();
@@ -255,14 +267,7 @@ fn links_outside_the_repository_cannot_be_read_saved_or_followed_by_delete() {
 
     let repository = Repository::open(&root).unwrap();
     assert!(read_file(&repository, "link/secret.txt").is_err());
-    assert!(save_file(
-        &repository,
-        "link/secret.txt",
-        "changed\n",
-        "utf-8",
-        "lf"
-    )
-    .is_err());
+    assert!(save_file(&repository, "link/secret.txt", "changed\n", "utf-8", "lf").is_err());
     assert_eq!(
         std::fs::read(outside_dir.join("secret.txt")).unwrap(),
         b"secret"

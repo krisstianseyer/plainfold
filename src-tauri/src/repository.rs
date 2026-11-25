@@ -43,8 +43,8 @@ pub struct CreatedItem {
 
 pub fn read_file(repository: &Repository, relative: &str) -> AppResult<FileRead> {
     let absolute = repository.resolve_existing(relative)?;
-    let metadata = std::fs::metadata(&absolute)
-        .map_err(|_| AppError::new("The file no longer exists."))?;
+    let metadata =
+        std::fs::metadata(&absolute).map_err(|_| AppError::new("The file no longer exists."))?;
     if !metadata.is_file() {
         return Err(AppError::new("That is a folder, not a file."));
     }
@@ -125,12 +125,7 @@ pub fn read_file(repository: &Repository, relative: &str) -> AppResult<FileRead>
     })
 }
 
-fn external_file_read(
-    relative: &str,
-    name: String,
-    size: u64,
-    modified_ms: i64,
-) -> FileRead {
+fn external_file_read(relative: &str, name: String, size: u64, modified_ms: i64) -> FileRead {
     FileRead {
         path: relative.to_string(),
         name,
@@ -149,8 +144,8 @@ fn external_file_read(
 
 fn read_prefix(path: &Path, limit: u64) -> AppResult<Vec<u8>> {
     use std::io::Read;
-    let file = std::fs::File::open(path)
-        .map_err(|_| AppError::new("The file could not be read."))?;
+    let file =
+        std::fs::File::open(path).map_err(|_| AppError::new("The file could not be read."))?;
     let mut bytes = Vec::new();
     file.take(limit)
         .read_to_end(&mut bytes)
@@ -177,8 +172,8 @@ pub fn save_file_with_revisions(
     retention: Option<crate::revisions::Retention>,
 ) -> AppResult<SaveOutcome> {
     let absolute = repository.resolve_for_write(relative)?;
-    let metadata = std::fs::metadata(&absolute)
-        .map_err(|_| AppError::new("The file no longer exists."))?;
+    let metadata =
+        std::fs::metadata(&absolute).map_err(|_| AppError::new("The file no longer exists."))?;
     if !metadata.is_file() {
         return Err(AppError::new("That is a folder, not a file."));
     }
@@ -216,7 +211,9 @@ pub fn save_file_with_revisions(
     }
     if let Some(retention) = retention {
         if existing != bytes {
-            if let Err(error) = crate::revisions::capture(repository, relative, &existing, &retention) {
+            if let Err(error) =
+                crate::revisions::capture(repository, relative, &existing, &retention)
+            {
                 crate::log::line("warn", &format!("revision capture failed: {error}"));
             }
         }
@@ -234,8 +231,8 @@ pub fn save_file_with_revisions(
 
 pub fn read_text(repository: &Repository, relative: &str) -> AppResult<String> {
     let absolute = repository.resolve_existing(relative)?;
-    let bytes = std::fs::read(&absolute)
-        .map_err(|_| AppError::new("The file could not be read."))?;
+    let bytes =
+        std::fs::read(&absolute).map_err(|_| AppError::new("The file could not be read."))?;
     Ok(encoding::decode(&bytes).text)
 }
 
@@ -314,7 +311,9 @@ pub fn move_item(repository: &Repository, source: &str, target_parent: &str) -> 
     let metadata = std::fs::symlink_metadata(&source_absolute)
         .map_err(|_| AppError::new("The item no longer exists."))?;
     if metadata.file_type().is_symlink() {
-        return Err(AppError::new("Symbolic links cannot be moved from Plainfold."));
+        return Err(AppError::new(
+            "Symbolic links cannot be moved from Plainfold.",
+        ));
     }
 
     let target_parent_path = normalize_relative_allow_empty(target_parent)?;
@@ -355,7 +354,9 @@ pub fn move_item(repository: &Repository, source: &str, target_parent: &str) -> 
 
 pub fn delete_item(repository: &Repository, relative: &str) -> AppResult<()> {
     if relative.is_empty() {
-        return Err(AppError::new("The repository folder cannot be deleted from the app."));
+        return Err(AppError::new(
+            "The repository folder cannot be deleted from the app.",
+        ));
     }
     let normalized = crate::paths::normalize_relative(relative)?;
     let parent = normalized
@@ -378,7 +379,8 @@ pub fn delete_item(repository: &Repository, relative: &str) -> AppResult<()> {
     // A folder is trashed as a folder; a symlink is trashed as a link and is
     // never followed.
     let _ = metadata;
-    trash::delete(&target).map_err(|_| AppError::new("The item could not be moved to the trash."))?;
+    trash::delete(&target)
+        .map_err(|_| AppError::new("The item could not be moved to the trash."))?;
     Ok(())
 }
 
@@ -467,10 +469,24 @@ mod tests {
             monthly: 12,
             yearly: 100,
         };
-        save_file_with_revisions(&repository, "note.txt", "first\n", "utf-8", "lf", Some(retention))
-            .unwrap();
-        save_file_with_revisions(&repository, "note.txt", "second\n", "utf-8", "lf", Some(retention))
-            .unwrap();
+        save_file_with_revisions(
+            &repository,
+            "note.txt",
+            "first\n",
+            "utf-8",
+            "lf",
+            Some(retention),
+        )
+        .unwrap();
+        save_file_with_revisions(
+            &repository,
+            "note.txt",
+            "second\n",
+            "utf-8",
+            "lf",
+            Some(retention),
+        )
+        .unwrap();
         let revisions = crate::revisions::list(&repository, "note.txt").unwrap();
         assert_eq!(revisions.len(), 1);
         let id = &revisions[0].id;
@@ -516,14 +532,7 @@ mod tests {
             std::fs::read(dir.path().join("note.txt")).unwrap(),
             b"one\r\ntwo\r\n"
         );
-        assert!(save_file(
-            &repository,
-            "note.txt",
-            "three\n",
-            "utf-16le",
-            "crlf"
-        )
-        .is_err());
+        assert!(save_file(&repository, "note.txt", "three\n", "utf-16le", "crlf").is_err());
     }
 
     #[test]
@@ -533,6 +542,9 @@ mod tests {
         let repository = Repository::open(dir.path()).unwrap();
         let big = "a".repeat((MAX_EDIT_BYTES + 1) as usize);
         assert!(save_file(&repository, "note.txt", &big, "utf-8", "lf").is_err());
-        assert_eq!(std::fs::read(dir.path().join("note.txt")).unwrap(), b"small");
+        assert_eq!(
+            std::fs::read(dir.path().join("note.txt")).unwrap(),
+            b"small"
+        );
     }
 }

@@ -112,10 +112,7 @@ pub fn list(repository: &Repository, relative: &str) -> Result<Vec<RevisionInfo>
                 .and_then(|meta| meta.modified().ok())
                 .map(crate::repository::system_ms)
                 .unwrap_or(0),
-            size: metadata
-                .as_ref()
-                .map(|meta| meta.len() as i64)
-                .unwrap_or(0),
+            size: metadata.as_ref().map(|meta| meta.len() as i64).unwrap_or(0),
         });
     }
     revisions.sort_by(|a, b| b.id.cmp(&a.id));
@@ -146,8 +143,7 @@ pub fn restore(
             crate::log::line("warn", &format!("revision capture failed: {error}"));
         }
     }
-    atomic_write(&target, &bytes)
-        .map_err(|_| "The revision could not be restored.".to_string())?;
+    atomic_write(&target, &bytes).map_err(|_| "The revision could not be restored.".to_string())?;
     Ok(())
 }
 
@@ -274,10 +270,7 @@ fn rotate(directory: &Path, retention: &Retention) {
     }
 }
 
-fn select_keep(
-    snapshots: &[(String, DateTime<Local>)],
-    retention: &Retention,
-) -> HashSet<String> {
+fn select_keep(snapshots: &[(String, DateTime<Local>)], retention: &Retention) -> HashSet<String> {
     type BucketKey = fn(&DateTime<Local>) -> String;
     let tiers: [(u32, BucketKey); 5] = [
         (retention.hourly, hour_key),

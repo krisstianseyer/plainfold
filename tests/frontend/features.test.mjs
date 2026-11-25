@@ -33,7 +33,6 @@ const EXPECTED_GROUPS = [
   "recentRepositories",
   "updates",
   "about",
-  "zoom",
   "desktopShortcut",
   "externalFiles",
 ];
@@ -70,8 +69,7 @@ const EXPECTED_CONTROLS = {
     "recentRepositories.removeAction",
   ],
   updates: ["updates.autoCheck", "updates.banner", "updates.settingsSection"],
-  about: ["about.brand", "about.version", "about.githubLink"],
-  zoom: ["zoom.wheel", "zoom.resetShortcut"],
+  about: ["about.brand", "about.version", "about.githubLink", "about.supportLink"],
   desktopShortcut: ["desktopShortcut.firstRunPrompt"],
   externalFiles: ["externalFiles.openDefaultApp"],
 };
@@ -90,8 +88,8 @@ test("the registry has exactly the specified advanced controls", () => {
   );
 });
 
-test("the registry has exactly the 21 specified groups", () => {
-  assert.equal(FEATURE_GROUPS.length, 21);
+test("the registry has exactly the 20 specified groups", () => {
+  assert.equal(FEATURE_GROUPS.length, 20);
   assert.deepEqual(
     FEATURE_GROUPS.map((group) => group.id).sort(),
     [...EXPECTED_GROUPS].sort()

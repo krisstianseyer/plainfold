@@ -500,9 +500,10 @@ impl Index {
     }
 
     pub fn recents(&self, limit: usize) -> Vec<String> {
-        let mut statement = match self.connection.prepare(
-            "SELECT path FROM recents ORDER BY opened_at_ms DESC LIMIT ?1",
-        ) {
+        let mut statement = match self
+            .connection
+            .prepare("SELECT path FROM recents ORDER BY opened_at_ms DESC LIMIT ?1")
+        {
             Ok(statement) => statement,
             Err(_) => return Vec::new(),
         };
@@ -648,9 +649,7 @@ pub fn index_database_path(data_dir: &Path, repository_root: &Path) -> PathBuf {
     #[cfg(windows)]
     let text = text.to_lowercase();
     let hash = fnv1a64(text.as_bytes());
-    data_dir
-        .join("indexes")
-        .join(format!("{hash:016x}.sqlite"))
+    data_dir.join("indexes").join(format!("{hash:016x}.sqlite"))
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -716,9 +715,19 @@ mod tests {
     #[test]
     fn enumerates_and_searches_files() {
         let (dir, mut index) = setup();
-        std::fs::write(dir.path().join("alpha.txt"), "first line\nbanana split\nlast\n").unwrap();
+        std::fs::write(
+            dir.path().join("alpha.txt"),
+            "first line\nbanana split\nlast\n",
+        )
+        .unwrap();
         index
-            .upsert_file("alpha.txt", "alpha.txt", 30, 1, Some("first line\nbanana split\nlast\n"))
+            .upsert_file(
+                "alpha.txt",
+                "alpha.txt",
+                30,
+                1,
+                Some("first line\nbanana split\nlast\n"),
+            )
             .unwrap();
         let hits = index.search("banana", 20).unwrap();
         assert_eq!(hits.len(), 1);
@@ -774,8 +783,14 @@ mod tests {
             .unwrap();
         assert_eq!(index.tags_for("a.txt"), vec!["home", "work"]);
         let counts = index.tag_counts();
-        assert_eq!(counts.iter().find(|item| item.tag == "work").unwrap().count, 1);
-        assert_eq!(counts.iter().find(|item| item.tag == "home").unwrap().count, 1);
+        assert_eq!(
+            counts.iter().find(|item| item.tag == "work").unwrap().count,
+            1
+        );
+        assert_eq!(
+            counts.iter().find(|item| item.tag == "home").unwrap().count,
+            1
+        );
         index.set_pin("a.txt", true).unwrap();
         assert_eq!(index.pins(), vec!["a.txt"]);
         index.record_recent("a.txt").unwrap();

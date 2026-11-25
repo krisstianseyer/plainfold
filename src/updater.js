@@ -7,7 +7,7 @@
  * feature on.
  */
 
-export const UPDATE_OWNER = "your-github-user";
+export const UPDATE_OWNER = "krisstianseyer";
 export const UPDATE_REPO = "plainfold";
 export const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/latest`;
 export const UPDATE_LAST_CHECK_KEY = "plainfold.update.lastCheck";

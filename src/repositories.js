@@ -199,6 +199,14 @@ export function createRepositoryListItem(entry, options = {}) {
   path.textContent = entry.path;
   button.append(nameRow, path);
   button.addEventListener("click", () => options.onActivate?.(entry));
+  options.decorate?.(button, name, entry);
+  if (options.onContextMenu) {
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      options.onContextMenu?.(event, entry);
+    });
+  }
 
   li.append(button);
 
@@ -336,6 +344,10 @@ function listOptions() {
       Boolean(dependencies?.isFeatureOn?.(REPOSITORY_REMOVE_FEATURE)),
     onActivate: (entry) => repositories.switchTo(entry),
     onRemove: (entry) => repositories.removeRecent(entry),
+    decorate: (button, name, entry) =>
+      dependencies?.decorateRepository?.(button, name, entry),
+    onContextMenu: (event, entry) =>
+      dependencies?.onRepositoryContextMenu?.(event, entry),
   };
 }
 

@@ -3,20 +3,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
 use tauri::async_runtime::spawn_blocking;
+use tauri::{AppHandle, State};
 
 use crate::desktop::{self, DesktopShortcutStatus};
 use crate::encoding::should_index_size;
 use crate::index::{index_database_path, Index, SearchHit, TagCount};
 use crate::paths::Repository;
+use crate::repository::{self, CreatedItem, FileRead, SaveOutcome};
 use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::tree::{self, SortOrder, TreeNode};
 use crate::undo::{self, UndoAction, UndoState};
-use crate::repository::{
-    self, CreatedItem, FileRead, SaveOutcome,
-};
 use crate::watcher;
 
 /// How long deleted items stay available for Undo.
@@ -332,10 +330,7 @@ fn list_tree_impl(state: &Arc<AppState>) -> Result<Vec<TreeNode>, String> {
 }
 
 #[tauri::command]
-pub async fn read_file(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<FileRead, String> {
+pub async fn read_file(state: State<'_, Arc<AppState>>, path: String) -> Result<FileRead, String> {
     let state: Arc<AppState> = (*state).clone();
     spawn_blocking(move || read_file_impl(&state, &path))
         .await
@@ -359,10 +354,7 @@ fn read_file_impl(state: &Arc<AppState>, path: &str) -> Result<FileRead, String>
 }
 
 #[tauri::command]
-pub fn open_external(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<(), String> {
+pub fn open_external(state: State<'_, Arc<AppState>>, path: String) -> Result<(), String> {
     let absolute = {
         let inner = state
             .inner
@@ -422,6 +414,14 @@ pub fn open_update_page(url: String) -> Result<(), String> {
     opener::open(&url).map_err(|_| "That update link could not be opened.".to_string())
 }
 
+/// The support page is a fixed address, so the frontend never supplies a URL.
+const SUPPORT_URL: &str = "https://ko-fi.com/krisstian";
+
+#[tauri::command]
+pub fn open_support_page() -> Result<(), String> {
+    opener::open(SUPPORT_URL).map_err(|_| "That support link could not be opened.".to_string())
+}
+
 #[tauri::command]
 pub async fn list_revisions(
     state: State<'_, Arc<AppState>>,
@@ -463,11 +463,7 @@ pub async fn restore_revision(
         .map_err(|_| "The operation could not be completed.".to_string())?
 }
 
-fn restore_revision_impl(
-    state: &Arc<AppState>,
-    path: &str,
-    id: &str,
-) -> Result<(), String> {
+fn restore_revision_impl(state: &Arc<AppState>, path: &str, id: &str) -> Result<(), String> {
     let (repository, retention) = {
         let inner = state
             .inner
@@ -515,29 +511,22 @@ fn save_file_impl(
         .clone();
     // Consecutive saves of one file collapse into a single step, so Undo
     // goes back to the text the file had before the editing session.
-    let pending = inner
-        .undo
-        .peek_undo()
-        .and_then(|(_, action)| match action {
-            UndoAction::Save {
-                path: last, content, ..
-            } if last == path => Some(content.clone()),
-            _ => None,
-        });
+    let pending = inner.undo.peek_undo().and_then(|(_, action)| match action {
+        UndoAction::Save {
+            path: last,
+            content,
+            ..
+        } if last == path => Some(content.clone()),
+        _ => None,
+    });
     let retention = if inner.settings.feature_enabled("revisions") {
         Some(inner.settings.retention())
     } else {
         None
     };
-    let outcome = repository::save_file_with_revisions(
-        &repository,
-        path,
-        content,
-        encoding,
-        eol,
-        retention,
-    )
-    .map_err(|error| error.to_string())?;
+    let outcome =
+        repository::save_file_with_revisions(&repository, path, content, encoding, eol, retention)
+            .map_err(|error| error.to_string())?;
     let previous = match pending {
         Some(text) if !text.is_empty() => {
             inner.undo.pop_undo();
@@ -553,11 +542,7 @@ fn save_file_impl(
         },
     );
     if let Some(index) = inner.index.as_mut() {
-        let name = path
-            .rsplit('/')
-            .next()
-            .unwrap_or(path)
-            .to_string();
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
         let body = if should_index_size(outcome.size as u64) {
             Some(content)
         } else {
@@ -600,7 +585,12 @@ fn create_item_impl(
         .map_err(|error| error.to_string())?;
     if !created.is_dir {
         if let Some(index) = inner.index.as_mut() {
-            let leaf = created.path.rsplit('/').next().unwrap_or(&created.path).to_string();
+            let leaf = created
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&created.path)
+                .to_string();
             let absolute = repository.root().join(&created.path);
             let metadata = std::fs::metadata(&absolute).ok();
             let size = metadata.as_ref().map(|meta| meta.len() as i64).unwrap_or(0);
@@ -671,10 +661,7 @@ fn move_item_impl(
 }
 
 #[tauri::command]
-pub async fn delete_item(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<(), String> {
+pub async fn delete_item(state: State<'_, Arc<AppState>>, path: String) -> Result<(), String> {
     let state: Arc<AppState> = (*state).clone();
     spawn_blocking(move || delete_item_impl(&state, &path))
         .await
@@ -781,9 +768,7 @@ fn rescan_impl(state: &Arc<AppState>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub fn get_organization(
-    state: State<'_, Arc<AppState>>,
-) -> Result<Organization, String> {
+pub fn get_organization(state: State<'_, Arc<AppState>>) -> Result<Organization, String> {
     let inner = state
         .inner
         .lock()
@@ -805,18 +790,14 @@ pub fn get_organization(
 }
 
 #[tauri::command]
-pub fn remove_recent(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<(), String> {
+pub fn remove_recent(state: State<'_, Arc<AppState>>, path: String) -> Result<(), String> {
     let mut inner = state
         .inner
         .lock()
         .map_err(|_| "Plainfold could not read its state.".to_string())?;
-    let index = inner
-        .index
-        .as_mut()
-        .ok_or_else(|| "Recent files are unavailable because the search index is not open.".to_string())?;
+    let index = inner.index.as_mut().ok_or_else(|| {
+        "Recent files are unavailable because the search index is not open.".to_string()
+    })?;
     index.remove_recent(&path)
 }
 
@@ -846,11 +827,7 @@ pub fn set_tags(
 }
 
 #[tauri::command]
-pub fn set_pin(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-    pinned: bool,
-) -> Result<(), String> {
+pub fn set_pin(state: State<'_, Arc<AppState>>, path: String, pinned: bool) -> Result<(), String> {
     let mut inner = state
         .inner
         .lock()
@@ -980,7 +957,12 @@ fn step_impl(state: &Arc<AppState>, reverse: bool) -> Result<String, String> {
         }
     })?;
 
-    let outcome = perform(&repository, inner.undo_backup_dir.as_deref(), &action, reverse);
+    let outcome = perform(
+        &repository,
+        inner.undo_backup_dir.as_deref(),
+        &action,
+        reverse,
+    );
     match outcome {
         Ok((inverse, message)) => {
             // A restored deletion cannot be repeated, so it leaves no redo
@@ -1020,12 +1002,13 @@ fn perform(
 ) -> Result<(UndoAction, String), String> {
     match action {
         UndoAction::Save { path, content } => {
-            let current = repository::read_text(repository, path).map_err(|error| error.to_string())?;
+            let current =
+                repository::read_text(repository, path).map_err(|error| error.to_string())?;
             let absolute = repository
                 .resolve_for_write(path)
                 .map_err(|error| error.to_string())?;
-            let bytes = std::fs::read(&absolute)
-                .map_err(|_| "The file could not be read.".to_string())?;
+            let bytes =
+                std::fs::read(&absolute).map_err(|_| "The file could not be read.".to_string())?;
             let decoded = crate::encoding::decode(&bytes);
             let text = if reverse { content } else { &current };
             let encoded = crate::encoding::encode(text, decoded.encoding, decoded.eol);
@@ -1101,13 +1084,9 @@ fn perform(
                     format!("Removed {path}."),
                 ))
             } else {
-                let created = repository::create_item(
-                    repository,
-                    &parent_of(path),
-                    basename(path),
-                    *is_dir,
-                )
-                .map_err(|error| error.to_string())?;
+                let created =
+                    repository::create_item(repository, &parent_of(path), basename(path), *is_dir)
+                        .map_err(|error| error.to_string())?;
                 Ok((
                     UndoAction::Create {
                         path: created.path.clone(),
@@ -1121,7 +1100,8 @@ fn perform(
             if reverse {
                 let mut restored = Vec::with_capacity(entries.len());
                 for entry in entries {
-                    let path = undo::restore(repository, entry).map_err(|error| error.to_string())?;
+                    let path =
+                        undo::restore(repository, entry).map_err(|error| error.to_string())?;
                     restored.push(undo::TrashedEntry {
                         path,
                         ..entry.clone()
@@ -1246,9 +1226,7 @@ pub fn remove_recent_repository(
         if let Some(repository) = inner.repository.as_ref() {
             let current = crate::paths::display_path(repository.root());
             if same_path(&current, &path) {
-                return Err(
-                    "Switch to another repository before removing this one.".to_string()
-                );
+                return Err("Switch to another repository before removing this one.".to_string());
             }
         }
         inner.settings.clone()
@@ -1293,7 +1271,10 @@ mod tests {
             settings.recent_repositories,
             vec![second_path.clone(), first_path.clone()]
         );
-        assert_eq!(settings.last_repository.as_deref(), Some(second_path.as_str()));
+        assert_eq!(
+            settings.last_repository.as_deref(),
+            Some(second_path.as_str())
+        );
 
         // Reopening an older repository moves it to the front without growing
         // the list.
@@ -1302,7 +1283,10 @@ mod tests {
             settings.recent_repositories,
             vec![first_path.clone(), second_path.clone()]
         );
-        assert_eq!(settings.last_repository.as_deref(), Some(first_path.as_str()));
+        assert_eq!(
+            settings.last_repository.as_deref(),
+            Some(first_path.as_str())
+        );
     }
 
     #[test]
@@ -1403,7 +1387,9 @@ mod tests {
         assert!(!validate_update_url("HTTPS://github.com/owner/repo"));
         assert!(!validate_update_url("https://gitlab.com/owner/repo"));
         assert!(!validate_update_url("https://github.com.evil/owner/repo"));
-        assert!(!validate_update_url("https://github.com@evil.com/owner/repo"));
+        assert!(!validate_update_url(
+            "https://github.com@evil.com/owner/repo"
+        ));
         assert!(!validate_update_url("https://github.com/owner/repo "));
         assert!(!validate_update_url("https://github.com/owner/re po"));
         assert!(!validate_update_url("https://github.com/owner/repo\n"));

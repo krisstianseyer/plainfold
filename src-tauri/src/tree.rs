@@ -37,7 +37,11 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
-pub fn build_tree(repository: &Repository, sort: SortOrder, index: Option<&Index>) -> Vec<TreeNode> {
+pub fn build_tree(
+    repository: &Repository,
+    sort: SortOrder,
+    index: Option<&Index>,
+) -> Vec<TreeNode> {
     build_dir(repository, repository.root(), sort, index, 0)
 }
 
@@ -111,16 +115,19 @@ fn build_dir(
         });
     }
 
-    let (mut folders, mut files): (Vec<TreeNode>, Vec<TreeNode>) = nodes
-        .into_iter()
-        .partition(|node| node.is_dir);
+    let (mut folders, mut files): (Vec<TreeNode>, Vec<TreeNode>) =
+        nodes.into_iter().partition(|node| node.is_dir);
     sort_group(&mut folders, sort, &positions);
     sort_group(&mut files, sort, &positions);
     folders.extend(files);
     folders
 }
 
-fn sort_group(nodes: &mut [TreeNode], sort: SortOrder, positions: &std::collections::HashMap<String, i64>) {
+fn sort_group(
+    nodes: &mut [TreeNode],
+    sort: SortOrder,
+    positions: &std::collections::HashMap<String, i64>,
+) {
     nodes.sort_by(|a, b| {
         let a_position = positions.get(&a.name).copied();
         let b_position = positions.get(&b.name).copied();
@@ -135,10 +142,7 @@ fn sort_group(nodes: &mut [TreeNode], sort: SortOrder, positions: &std::collecti
                     .unwrap_or(i64::MIN)
                     .cmp(&a.modified_ms.unwrap_or(i64::MIN))
                     .then_with(|| compare_names(a, b)),
-                SortOrder::Size => a
-                    .size
-                    .cmp(&b.size)
-                    .then_with(|| compare_names(a, b)),
+                SortOrder::Size => a.size.cmp(&b.size).then_with(|| compare_names(a, b)),
             },
         }
     });
@@ -204,11 +208,7 @@ fn walk_for_index(
             continue;
         };
         let size = link_meta.len();
-        let mtime = link_meta
-            .modified()
-            .ok()
-            .map(system_ms)
-            .unwrap_or_default();
+        let mtime = link_meta.modified().ok().map(system_ms).unwrap_or_default();
         let body = indexable_body(&path, size);
         index.upsert_file(&relative, &name, size as i64, mtime, body.as_deref())?;
         *count += 1;

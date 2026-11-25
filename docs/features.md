@@ -16,7 +16,7 @@ Some controls cannot be disabled. They are the safety floor:
 - Window controls.
 - Encoding and read-only guards.
 
-Settings is always reachable, so a disabled feature can always be restored. The Settings button is the only permanently visible app control.
+Settings is always reachable from the Application menu, so a disabled feature can always be restored.
 
 ## What disabling a feature does
 
@@ -50,13 +50,13 @@ The Settings window has left category navigation. There is no Save/Cancel footer
 
 | Category | What it contains |
 |---|---|
-| Appearance | Theme, font family, font size, and reset editor zoom. Themes: Follow the system, Light, Dark, Sepia, Nord, Solarized Light, Solarized Dark, Midnight, Forest. |
+| Appearance | Theme, font family, font size, and Window chrome options for the full menu title bar, status bar, and file header buttons, plus a desktop menu layout preset. Themes: Follow the system, Light, White, Dark, Sepia, Nord, Solarized Light, Solarized Dark, Midnight, Forest. Accent color: theme default or Blue, Teal, Green, Amber, Orange, Rose, Violet, or Slate, applied to every theme, with selectable coverage for the title bar, file header, status bar, sidebar, controls, and editor. Content background: follow theme, White, Paper, Gray, Dark, or Black; editor text and syntax colors adapt to the chosen pane. |
 | Editor | Tab width, autosave, revision retention, and editor statistics. |
 | Sidebar & Tree | Pinned and recent limits, default sort, tree filtering, sort and drag behavior, and create/delete. |
 | Search | Search feature state, index information, and Rebuild index. |
 | Repositories | Startup repository, an explanation of reopen-last behavior, the recent repository limit, and the saved repository list with remove controls. |
 | Updates | Auto-check switch, Check now, current version, latest version, last checked, and update source status. |
-| Features | All 21 feature groups, grouped under Browsing, Editing, and Application. Each group expands to its advanced controls. |
+| Features | All 20 feature groups, grouped under Browsing, Editing, and Application. Each group expands to its advanced controls. |
 | Maintenance | Rebuild search index, clear recent repositories, and reset all settings. |
 | About | Version, update source, GitHub placeholder, and a plain-language note about the app. |
 
@@ -76,7 +76,7 @@ These are the 21 groups in Settings > Features, with the advanced controls each 
 
 | Group | What it covers | Advanced controls |
 |---|---|---|
-| Search | Toolbar search, the search shortcut, and the results list. | `search.toolbar`, `search.shortcut`, `search.results` |
+| Search | Sidebar search, the search shortcut, and the results list. | `search.toolbar`, `search.shortcut`, `search.results` |
 | Tree filter | The filter field above the repository tree. | `treeFilter.input` |
 | Pinned | The Pinned section and its context menu actions. | `pinned.section`, `pinned.contextActions` |
 | Recent files | The Recent section and the Remove from Recent action. | `recentFiles.section`, `recentFiles.removeAction` |
@@ -84,17 +84,16 @@ These are the 21 groups in Settings > Features, with the advanced controls each 
 | Revisions | Show revisions and the revision retention settings. | `revisions.contextAction`, `revisions.settings` |
 | Autosave | The autosave engine and its settings fields. | `autosave.engine`, `autosave.settings` |
 | External-change watcher | Reloading a clean file and the notice for a file with unsaved edits. | `watcher.autoReload`, `watcher.notice` |
-| Repository undo/redo | Undo and redo for repository operations, through buttons and shortcuts. | `repositoryUndo.buttons`, `repositoryUndo.shortcuts` |
+| Repository undo/redo | Undo and redo for repository operations, through Edit menu items and shortcuts. | `repositoryUndo.buttons`, `repositoryUndo.shortcuts` |
 | Sort & drag order | The one-click sort button, drag reorder, drag move, and reset action. | `sortAndOrder.sortButton`, `sortAndOrder.dragReorder`, `sortAndOrder.dragMove`, `sortAndOrder.resetAction` |
 | Create/delete | New file, new folder, new empty file, and delete to trash. | `createDelete.newFile`, `createDelete.newFolder`, `createDelete.emptyNewFile`, `createDelete.deleteAction` |
-| Wrap toggle | The wrap on/off control. | `wrap.toggle` |
+| Wrap toggle | The Word Wrap item in the Edit menu. | `wrap.toggle` |
 | Syntax highlighting | Extension-based highlighting in the editor. | `syntaxHighlighting.editor` |
-| Editor statistics | Word, character, and size counts in the status bar. | `editorStats.statusWords` |
-| Repository counts | Folder and file counts in the status bar. | `repositoryCounts.statusCounts` |
+| Editor statistics | Word, character, and size counts in the filename tooltip. | `editorStats.statusWords` |
+| Repository counts | Folder and file counts on the Repository heading tooltip. | `repositoryCounts.statusCounts` |
 | Recent repositories | The Repositories section, the welcome-screen list, and remove controls. | `recentRepositories.section`, `recentRepositories.welcomeList`, `recentRepositories.removeAction` |
 | Update checks | The automatic launch check, the update banner, and the Updates settings section. | `updates.autoCheck`, `updates.banner`, `updates.settingsSection` |
-| About popover | The Plainfold brand, version, and GitHub link. | `about.brand`, `about.version`, `about.githubLink` |
-| Zoom gestures | Ctrl+wheel zoom and the reset shortcut. | `zoom.wheel`, `zoom.resetShortcut` |
+| About block | The app description, version, GitHub link, and Ko-fi support link in the Application menu and Settings > About. | `about.brand`, `about.version`, `about.githubLink`, `about.supportLink` |
 | Desktop shortcut prompt | The first-run Linux desktop shortcut prompt. | `desktopShortcut.firstRunPrompt` |
 | Non-text file opening | Opening images, audio, video, PDF, Office, and similar files in the OS default app. | `externalFiles.openDefaultApp` |
 
@@ -142,14 +141,14 @@ Plainfold can check GitHub Releases for a newer version on launch. The check is 
 - The app's only network destination is `https://api.github.com`.
 - There is no telemetry, account, token, or identifier. The request is an ordinary HTTPS request; as with any HTTPS request, GitHub sees the connection's IP address and standard request headers. No repository path or file content is sent.
 
-The update source is a placeholder in `src/updater.js`:
+The update source is configured in `src/updater.js`:
 
 ```js
-const UPDATE_OWNER = "your-github-user";
+const UPDATE_OWNER = "krisstianseyer";
 const UPDATE_REPO = "plainfold";
 ```
 
-While the owner is the placeholder, the source is unconfigured and no request is made. To enable update checks, replace both constants with a real public GitHub owner and repository before building. Plainfold requests `https://api.github.com/repos/<owner>/<repo>/releases/latest`, ignores drafts and prereleases, and accepts a `tag_name` and `html_url`. The request times out after 8 seconds. A network or HTTP problem never crashes the app.
+While the owner is the `your-github-user` placeholder, the source counts as unconfigured and no request is made. Plainfold requests `https://api.github.com/repos/<owner>/<repo>/releases/latest`, ignores drafts and prereleases, and accepts a `tag_name` and `html_url`. The request times out after 8 seconds. A network or HTTP problem never crashes the app.
 
 When an update is found, a dismissible banner appears below the top bar: `Plainfold <version> is available.` It offers Release notes and Dismiss. Dismiss remembers that version. Release notes open in the browser through the existing `opener` crate, and only `https://github.com/` addresses are accepted.
 

@@ -127,9 +127,7 @@ pub fn normalize_relative(relative: &str) -> AppResult<PathBuf> {
             return Err(AppError::new("That path is not valid."));
         }
         if part == REVISIONS_DIR || part.eq_ignore_ascii_case(REVISIONS_DIR) {
-            return Err(AppError::new(
-                "That name is reserved for revision history.",
-            ));
+            return Err(AppError::new("That name is reserved for revision history."));
         }
         out.push(part);
     }
@@ -253,7 +251,9 @@ mod tests {
 
         let repository = Repository::open(&root).unwrap();
         assert!(repository.resolve_existing("inside.txt").is_ok());
-        assert!(repository.resolve_existing("../outside/secret.txt").is_err());
+        assert!(repository
+            .resolve_existing("../outside/secret.txt")
+            .is_err());
         assert!(repository
             .resolve_existing(temp.path().join("outside/secret.txt").to_str().unwrap())
             .is_err());

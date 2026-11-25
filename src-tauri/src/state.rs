@@ -56,7 +56,6 @@ impl AppState {
     /// Undo copies for the open repository live beside its search index so they
     /// never appear inside the repository itself.
     pub fn undo_backup_dir(&self, root: &std::path::Path) -> PathBuf {
-        crate::index::index_database_path(&self.data_dir, root)
-            .with_extension("undo")
+        crate::index::index_database_path(&self.data_dir, root).with_extension("undo")
     }
 }

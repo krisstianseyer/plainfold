@@ -30,6 +30,35 @@ Install test checklist:
 6. Open a vault, create a file, type text, save with Ctrl+S, close, and reopen. The text is still on disk.
 7. Confirm network behavior. With the placeholder update source, launch makes no request. After configuring a real source, the only request is the optional GitHub Releases check; turn off automatic checks in Settings > Updates and confirm a launch makes no request. Confirm no other network activity and no telemetry.
 
+## Windows portable edition
+
+The portable edition is a plain folder containing `Plainfold.exe` and a short README, with no archive or installer. It keeps its state next to the executable:
+
+- Settings, search index, logs, and WebView2 data live in `Plainfold-data/` beside `Plainfold.exe`.
+- The folder is assembled fresh and ships no settings, logs, search index, or other user data.
+- It uses its own identifier (`com.plainfold.app.portable`), so it can run alongside an installed copy and does not read the installed copy's data.
+- Windows 11 includes WebView2; Windows 10 needs the WebView2 Evergreen Runtime.
+
+Build:
+
+```powershell
+npm ci
+npm run portable
+```
+
+Result: `src-tauri/target/release/bundle/portable/Plainfold_<version>_portable_x64/`
+
+The portable build uses a separate Cargo target directory (`src-tauri/target/portable`), so it does not overwrite the installed release binary or the installers.
+
+Portable test checklist:
+
+1. Copy the folder to a writable local folder or USB stick.
+2. Launch `Plainfold.exe`. Confirm `Plainfold-data` appears next to it and that no settings from an installed copy appear.
+3. Open a vault, create a file, type, save with Ctrl+S, close, and reopen. Confirm the text persists.
+4. Confirm `Plainfold-data` holds the settings, search index, logs, and WebView2 data.
+5. Delete `Plainfold-data`, relaunch, and confirm the edition starts blank.
+6. Move or rename the extracted folder and confirm it still runs with its state beside the exe.
+
 ## Debian family (Debian, Ubuntu, Mint, Pop! OS)
 
 System packages (Ubuntu 22.04/24.04 names):
@@ -91,7 +120,7 @@ On first launch, accept the Desktop shortcut prompt and confirm `Plainfold.deskt
 
 `.github/workflows/build.yml` runs:
 
-- Windows: tests plus NSIS/MSI bundle.
+- Windows: tests plus NSIS/MSI bundles and the portable folder.
 - Ubuntu 22.04: tests plus `.deb`.
 - Fedora container: tests, `.rpm` build, and an RPM install check.
 
@@ -107,6 +136,8 @@ This build was verified as follows:
 - Ubuntu 24.04 WSL (Debian family): `npm run tauri build -- --bundles deb` produced the package; `apt` install, `ldd` missing-library check, and removal passed.
 - Ubuntu 24.04 WSL: 57 unit tests and 9 integration tests pass, including Linux XDG desktop-shortcut parsing, file creation, drag-move index migration, and GFS revision history. The `.deb`/`.rpm` artifacts need a rebuild and a real desktop-session prompt test.
 - `.rpm`: `npm run tauri build -- --bundles rpm` invoked `rpmbuild` from the same source; digest, metadata, dependencies, and file list were inspected. The Fedora CI job installs the RPM; launching it on a Fedora desktop remains a VM step.
+
+- Windows 1.6.2 portable: folder assembled from a fresh staging directory with the detailed README; the copy launched and created `Plainfold-data` (WebView2 data plus logs) beside the exe, while the installed copy's `%APPDATA%` and `%LOCALAPPDATA%` folders were untouched.
 
 ## Icons
 

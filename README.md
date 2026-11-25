@@ -17,15 +17,21 @@ The v1 feature set in `instructions.md` is implemented:
 - Settings in the OS config folder, written atomically, with safe fallback on corruption.
 - A file watcher that reloads clean files and preserves unsaved edits with a notice.
 - Unsaved-change prompts offer Save, Discard, and Cancel for switching files, changing repositories, deleting, and closing.
-- Autosave modes: off, after idle, or fixed interval. Defaults: off, idle 20 seconds, interval 120 seconds. Autosave runs only while the open file has unsaved edits.
+- Auto Save: a toggle in Settings plus an idle delay (default 20 seconds, up to 60 minutes). Auto Save runs only while the open file has unsaved edits.
 - Compressed revisions stored in the repository's hidden `.revisions` folder; restore from the file context menu. Retention uses Grandfather-Father-Son rotation with configurable hourly, daily, weekly, monthly, and yearly tiers.
 - Non-text files (images, audio, video, PDF, Office, Photoshop, archives, executables) open in the OS default app. Text and script formats stay in Plainfold.
 - Pinned and Recent context actions: open, pin/unpin, remove from Recent, reveal in the repository tree, tags, and move to the repository root. Clicking the Pinned or Recent heading opens a popup that sets how many entries the section shows.
 - Repository tree filter for partial names, paths, or extensions, with `*` and `?` wildcards; matching folders keep their contents visible.
 - Resizable sidebar pane; drag the divider, use arrow keys, or double-click to reset.
 - Plain-text links: `[[repository-relative/path]]`; Ctrl+click (Cmd+click on macOS) opens the linked file.
-- App version and GitHub repository placeholder in the About popover, repository folder/file counts on the left, and words, characters, and size of the open file on the right.
+- Application + Edit menu title bar with the app description, version, and GitHub placeholder; repository folder/file counts on the Repository heading; and words, characters, and size of the open file in the filename tooltip.
 - No framework on the front end; CodeMirror is the only editor dependency.
+
+Version 1.3.0 adds:
+
+- Screenshot-style Application and Edit menus with Save, Close File, Settings, app version, and the GitHub placeholder. Undo, redo, find, replace, clipboard, and Word Wrap live in the Edit menu.
+- Sidebar search, no status bar by default, and no Save/Close/Wrap buttons in the file header. Counts move to tooltips and messages appear in a bottom-right toast.
+- White is the default theme with a neutral Slate accent. Layout toggles and a "Use desktop menu layout" preset are under Settings > Appearance > Window chrome.
 
 Version 1.2.0 adds:
 
@@ -79,13 +85,16 @@ Version 1.2.0 is the version documented here. The rollback point is the annotate
 git switch -c restore/v1.1.27 v1.1.27
 ```
 
-## Build installers
+## Build installers and the portable edition
 
 ```sh
 npm run tauri build
+npm run portable
 ```
 
 The bundle targets are `"all"`, so each platform builds the installers it supports: NSIS on Windows, `.deb` and `.rpm` on Linux. See `PACKAGING.md`.
+
+`npm run portable` builds the Windows portable edition: a plain folder `Plainfold_<version>_portable_x64/` containing `Plainfold.exe` and a README, with no archive or installer. It ships no user data and keeps settings, logs, the search index, and WebView2 data in `Plainfold-data/` beside the exe. It requires WebView2 (included in Windows 11).
 
 For v1.2.0, the release round builds `npm run build` and `npm run tauri build -- --no-bundle` only. It does not produce installers.
 
@@ -97,6 +106,8 @@ For v1.2.0, the release round builds `npm run build` and `npm run tauri build --
 - Revisions: `vault/.revisions/<file path>/<UTC timestamp>.gz`. Hidden on Windows; dot-hidden on Linux. Excluded from tree, search, and watcher.
 - Vaults: the folder the user selected. Plainfold creates no hidden files or folders in a vault, except `.revisions` and a short-lived `plainfold-save-*` temporary file during an atomic save.
 
+The Windows portable edition keeps the settings, search index, logs, and WebView2 data in `Plainfold-data/` beside `Plainfold.exe` instead of the OS folders above.
+
 The index is a cache for file contents and organization data (tags, pins, recents, custom order). Deleting it never loses note content.
 
 ## Dependencies and why they exist
@@ -107,6 +118,7 @@ Front end, pinned exactly in `package.json`:
 - `@tauri-apps/plugin-dialog`: native folder picker and confirmation dialogs.
 - `codemirror` plus `@codemirror/*` language packages and `@codemirror/theme-one-dark`: editing and syntax highlighting only.
 - `@codemirror/legacy-modes`: shell highlighting for `.bat` files.
+- `@lezer/highlight`: syntax tag names for the White theme's editor palette.
 - `vite`: front-end bundler. Nothing is loaded from a CDN at runtime.
 
 Rust, pinned exactly in `src-tauri/Cargo.toml`:
@@ -130,7 +142,7 @@ Version 1.2 adds no runtime dependencies. The update check uses the webview's `f
 - Symbolic links are never edited, overwritten, or followed for deletion.
 - File contents are never logged.
 - Errors shown in the UI are plain language; technical detail stays out of the interface.
-- The app has no telemetry, accounts, sync, or CDN. Its only network request is the optional GitHub Releases check: an ordinary HTTPS request to `api.github.com` that sends no account, identifier, or file data. It is on by default, can be disabled in Settings > Updates, and makes no request while the update source is the placeholder.
+- The app has no telemetry, accounts, sync, or CDN. Its only network request is the optional GitHub Releases check: an ordinary HTTPS request to `api.github.com` for `krisstianseyer/plainfold` releases that sends no account, identifier, or file data. It is on by default and can be disabled in Settings > Updates.
 
 ## Open owner decisions
 

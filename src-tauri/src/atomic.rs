@@ -94,7 +94,11 @@ mod tests {
             .filter(|entry| {
                 entry
                     .as_ref()
-                    .map(|e| e.file_name().to_string_lossy().starts_with("plainfold-save-"))
+                    .map(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("plainfold-save-")
+                    })
                     .unwrap_or(false)
             })
             .count();
@@ -126,7 +130,11 @@ mod tests {
             .filter(|entry| {
                 entry
                     .as_ref()
-                    .map(|e| e.file_name().to_string_lossy().starts_with("plainfold-save-"))
+                    .map(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("plainfold-save-")
+                    })
                     .unwrap_or(false)
             })
             .count();

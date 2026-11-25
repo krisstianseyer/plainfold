@@ -5,49 +5,119 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Plainfold</title>
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/redesign.css" />
   </head>
   <body>
     <div id="app" class="app">
-      <header class="topbar" data-tauri-drag-region>
-        <div class="brand-wrap" data-feature="about about.brand">
-          <button id="brand-button" class="brand" type="button" aria-label="Plainfold" aria-haspopup="dialog" aria-expanded="false" title="About Plainfold">
-            <span class="brand-mark" aria-hidden="true"><span class="brand-cursor"></span></span>
-            <span class="brand-name">Plainfold</span>
-          </button>
-          <div id="brand-popover" class="brand-popover" role="dialog" aria-label="About Plainfold" hidden>
-            <strong>Plainfold</strong>
-            <div class="brand-meta">
-              <span id="app-version" class="brand-version" data-feature="about about.version"></span>
-              <span id="repo-link" class="repo-link" title="GitHub repository URL not configured" aria-disabled="true" data-feature="about about.githubLink">
-                <svg class="repo-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
-                  <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
-                </svg>
-                <span class="repo-label">GitHub</span>
-              </span>
+      <header class="topbar">
+        <button
+          id="sidebar-toggle"
+          class="chrome-button sidebar-toggle"
+          type="button"
+          title="Toggle sidebar"
+          aria-label="Toggle sidebar"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="2.75" y="3.25" width="14.5" height="13.5" rx="2.5" />
+            <path d="M7.5 3.5v13" />
+          </svg>
+        </button>
+        <nav class="app-menu-bar" aria-label="Application menu" role="menubar">
+          <div class="menu-root">
+            <button
+              id="menu-application"
+              class="menu-trigger"
+              type="button"
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="application-menu"
+            >Application</button>
+            <div id="application-menu" class="menu-panel" role="menu" aria-labelledby="menu-application" hidden>
+              <div class="menu-about" data-feature="about about.brand">
+                <strong class="menu-about-name">Plainfold</strong>
+                <p class="menu-about-copy">A plain-text repository editor. Every note stays a real file on disk.</p>
+                <span id="app-version" class="menu-about-meta" data-feature="about about.version"></span>
+                <span id="repo-link" class="menu-about-meta menu-about-link" data-feature="about about.githubLink">GitHub — coming soon</span>
+                <button
+                  id="support-link"
+                  class="menu-about-meta menu-about-link menu-about-support"
+                  type="button"
+                  data-feature="about about.supportLink"
+                  title="https://ko-fi.com/krisstian"
+                ><span class="support-heart" aria-hidden="true">♥</span><svg class="support-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13v5.5A4.5 4.5 0 0 1 12.5 18h-4A4.5 4.5 0 0 1 4 13.5V8Z" /><path d="M17 9h1.6a2.4 2.4 0 0 1 0 4.8H17" /><path d="M4 21h13" /><path d="M8.8 5.4c.7-.9 1.7-.5 1.7.5 0 .9-1.2 1.5-1.7 2-.5-.5-1.7-1.1-1.7-2 0-1 1-1.4 1.7-.5Z" fill="currentColor" stroke="none" /></svg><span>Show your appreciation</span></button>
+              </div>
+              <div class="menu-separator" role="separator"></div>
+              <button id="menu-open-repository" class="menu-item" type="button" role="menuitem" data-menu-command="open-repository">
+                <span>Open Repository…</span><kbd>Ctrl+O</kbd>
+              </button>
+              <button id="menu-save" class="menu-item" type="button" role="menuitem" data-menu-command="save">
+                <span>Save</span><kbd>Ctrl+S</kbd>
+              </button>
+              <button id="menu-close-file" class="menu-item" type="button" role="menuitem" data-menu-command="close-file">
+                <span>Close File</span><kbd>Ctrl+W</kbd>
+              </button>
+              <div class="menu-separator" role="separator"></div>
+              <button id="menu-settings" class="menu-item" type="button" role="menuitem" data-menu-command="settings">
+                <span>Settings…</span><kbd>Ctrl+,</kbd>
+              </button>
+              <button id="menu-quit" class="menu-item" type="button" role="menuitem" data-menu-command="quit">
+                <span>Quit Plainfold</span>
+              </button>
             </div>
-            <p class="brand-note">Plain text, plain files. Notes stay real files on disk.</p>
           </div>
-        </div>
+          <div class="menu-root">
+            <button
+              id="menu-edit"
+              class="menu-trigger"
+              type="button"
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="edit-menu"
+            >Edit</button>
+            <div id="edit-menu" class="menu-panel" role="menu" aria-labelledby="menu-edit" hidden>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="undo">
+                <span>Undo</span><kbd>Ctrl+Z</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="redo">
+                <span>Redo</span><kbd>Ctrl+Y</kbd>
+              </button>
+              <div class="menu-separator" role="separator"></div>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="find">
+                <span>Find…</span><kbd>Ctrl+F</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="replace">
+                <span>Replace…</span><kbd>Ctrl+H</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="find-files">
+                <span>Find in Files…</span><kbd>Ctrl+Shift+F</kbd>
+              </button>
+              <div class="menu-separator" role="separator"></div>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="cut">
+                <span>Cut</span><kbd>Ctrl+X</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="copy">
+                <span>Copy</span><kbd>Ctrl+C</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="paste">
+                <span>Paste</span><kbd>Ctrl+V</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="delete">
+                <span>Delete</span><kbd>Del</kbd>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-edit-command="select-all">
+                <span>Select All</span><kbd>Ctrl+A</kbd>
+              </button>
+              <div class="menu-separator" role="separator"></div>
+              <button id="menu-wrap" class="menu-item menu-item-check" type="button" role="menuitemcheckbox" aria-checked="true" data-edit-command="wrap">
+                <span>Word Wrap</span><span class="menu-check" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+        </nav>
         <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
-        <div class="toolbar">
-          <button id="open-repository" class="button primary" type="button">Open Repository</button>
-          <div class="search-wrap" data-feature="search search.toolbar">
-            <input
-              id="search"
-              class="search-input"
-              type="search"
-              placeholder="Search names and contents"
-              autocomplete="off"
-              spellcheck="false"
-              aria-label="Search file names and contents"
-              aria-controls="search-results"
-            />
-            <kbd class="search-key" data-feature="search search.shortcut">Ctrl F</kbd>
-          </div>
-          <button id="undo-button" class="button" type="button" title="Undo (Ctrl+Z)" data-feature="repositoryUndo repositoryUndo.buttons">Undo</button>
-          <button id="redo-button" class="button" type="button" title="Redo (Ctrl+Y)" data-feature="repositoryUndo repositoryUndo.buttons">Redo</button>
-          <button id="settings-button" class="button" type="button">Settings</button>
-        </div>
         <div class="window-controls">
           <button id="window-minimize" class="window-control" type="button" title="Minimize" aria-label="Minimize">
             <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false"><path stroke="currentColor" stroke-width="1" d="M2 5.5h6"/></svg>
@@ -72,43 +142,140 @@
       <main class="layout">
         <aside class="sidebar" aria-label="Repository navigation">
           <div class="sidebar-scroll">
-            <section id="repositories-section" class="side-section" data-feature="recentRepositories recentRepositories.section">
+            <div class="sidebar-brand">
+              <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6.8 3.4h7.7l4 4.1v13.1H6.8z" />
+                  <path d="M14.3 3.6v4.2h4" />
+                  <path d="M11.9 11.2v5.4" />
+                </svg>
+              </span>
+              <span class="brand-name">Plainfold</span>
+            </div>
+
+            <button id="sidebar-open-repository" class="sidebar-primary" type="button">
+              <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <circle cx="10" cy="10" r="7.25" />
+                <path d="M10 6.75v6.5M6.75 10h6.5" />
+              </svg>
+              <span>Open repository</span>
+            </button>
+
+            <nav class="sidebar-nav" aria-label="Library views">
+              <button class="sidebar-nav-item is-active" type="button" data-home-filter="all" aria-pressed="true">
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3.2 6.1c0-.9.7-1.6 1.6-1.6h3l1.6 1.8h5.8c.9 0 1.6.7 1.6 1.6v6.4c0 .9-.7 1.6-1.6 1.6H4.8c-.9 0-1.6-.7-1.6-1.6z" />
+                </svg>
+                <span>Files</span>
+              </button>
+              <button class="sidebar-nav-item" type="button" data-home-filter="pinned" aria-pressed="false">
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.9 3.5l3.6 3.6-2.1 2.1.5 2.9-2.2 2.2-3.1-3.1" />
+                  <path d="M9.6 11.2l-5.1 5.1M8 3.1l2.8 2.8" />
+                </svg>
+                <span>Pinned</span>
+              </button>
+              <button class="sidebar-nav-item" type="button" data-home-filter="recent" aria-pressed="false">
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="10" cy="10" r="7" />
+                  <path d="M10 6.2v4.1l2.8 1.7" />
+                </svg>
+                <span>Recent</span>
+              </button>
+              <button id="sidebar-more" class="sidebar-nav-item" type="button">
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 6.5h12M4 10h12M4 13.5h12" />
+                  <circle cx="7.5" cy="6.5" r="1.4" fill="currentColor" stroke="none" />
+                  <circle cx="12.5" cy="10" r="1.4" fill="currentColor" stroke="none" />
+                  <circle cx="8.5" cy="13.5" r="1.4" fill="currentColor" stroke="none" />
+                </svg>
+                <span>More</span>
+              </button>
+            </nav>
+
+            <div id="sidebar-search-slot" class="sidebar-search-slot">
+              <div class="sidebar-search" data-feature="search search.toolbar">
+                <div class="search-wrap">
+                  <svg class="search-leading-icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <circle cx="8.75" cy="8.75" r="5.25" />
+                    <path d="M12.6 12.6l3.6 3.6" />
+                  </svg>
+                  <input
+                    id="search"
+                    class="search-input"
+                    type="search"
+                    placeholder="Search files and contents"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Search file names and contents"
+                    aria-controls="search-results"
+                  />
+                  <kbd class="search-key" data-feature="search search.shortcut">Ctrl Shift F</kbd>
+                </div>
+              </div>
+            </div>
+
+            <section id="repositories-section" class="side-section repositories-section" data-feature="recentRepositories recentRepositories.section">
               <div class="section-head">
                 <h2 class="side-title">Repositories</h2>
+                <button id="sidebar-add-repository" class="icon-button sidebar-section-action" type="button" title="Open a repository" aria-label="Open a repository">
+                  <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3.2 6.1c0-.9.7-1.6 1.6-1.6h3l1.6 1.8h5.8c.9 0 1.6.7 1.6 1.6v6.4c0 .9-.7 1.6-1.6 1.6H4.8c-.9 0-1.6-.7-1.6-1.6z" />
+                    <path d="M10 9.5v4M8 11.5h4" />
+                  </svg>
+                </button>
               </div>
               <ul id="repository-list" class="short-list repository-list" aria-label="Saved repositories"></ul>
             </section>
-            <section class="side-section" data-feature="pinned pinned.section">
-              <div class="section-head">
-                <button
-                  id="pinned-title"
-                  class="side-title limit-title"
-                  type="button"
-                  title="Choose how many pinned files are shown"
-                  aria-haspopup="dialog"
-                >Pinned</button>
-              </div>
-              <ul id="pinned-list" class="short-list"></ul>
-            </section>
-            <section class="side-section" data-feature="recentFiles recentFiles.section">
-              <div class="section-head">
-                <button
-                  id="recent-title"
-                  class="side-title limit-title"
-                  type="button"
-                  title="Choose how many recent files are shown"
-                  aria-haspopup="dialog"
-                >Recent</button>
-              </div>
-              <ul id="recent-list" class="short-list"></ul>
-            </section>
+
+            <div class="legacy-short-lists" hidden aria-hidden="true">
+              <section class="side-section" data-feature="pinned pinned.section">
+                <div class="section-head">
+                  <button
+                    id="pinned-title"
+                    class="side-title limit-title"
+                    type="button"
+                    title="Choose how many pinned files are shown"
+                    aria-haspopup="dialog"
+                  >Pinned</button>
+                </div>
+                <ul id="pinned-list" class="short-list"></ul>
+              </section>
+              <section class="side-section" data-feature="recentFiles recentFiles.section">
+                <div class="section-head">
+                  <button
+                    id="recent-title"
+                    class="side-title limit-title"
+                    type="button"
+                    title="Choose how many recent files are shown"
+                    aria-haspopup="dialog"
+                  >Recent</button>
+                </div>
+                <ul id="recent-list" class="short-list"></ul>
+              </section>
+            </div>
+
             <section class="side-section tree-section">
               <div class="section-head">
-                <h2 id="repository-label" class="side-title">Repository</h2>
+                <h2 id="repository-label" class="side-title">Files</h2>
                 <div class="tree-actions">
-                  <button id="sort-alpha" class="icon-button" type="button" title="Sort alphabetically" data-feature="sortAndOrder sortAndOrder.sortButton">A-Z</button>
-                  <button id="new-file" class="icon-button" type="button" title="New file" data-feature="createDelete createDelete.newFile">+ File</button>
-                  <button id="new-folder" class="icon-button" type="button" title="New folder" data-feature="createDelete createDelete.newFolder">+ Folder</button>
+                  <button id="sort-alpha" class="icon-button sidebar-section-action" type="button" title="Sort alphabetically" aria-label="Sort alphabetically" data-feature="sortAndOrder sortAndOrder.sortButton">
+                    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M5 4.5v11M3 13.2l2 2.3 2-2.3M11 5.5h6M11 10h4.5M11 14.5h3" />
+                    </svg>
+                  </button>
+                  <button id="new-file" class="icon-button sidebar-section-action" type="button" title="New file" aria-label="New file" data-feature="createDelete createDelete.newFile">
+                    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M5 2.8h6.2l3.8 3.8V17H5z" />
+                      <path d="M11 3v3.8h3.8M7.6 10.8h4.8M10 8.4v4.8" />
+                    </svg>
+                  </button>
+                  <button id="new-folder" class="icon-button sidebar-section-action" type="button" title="New folder" aria-label="New folder" data-feature="createDelete createDelete.newFolder">
+                    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3.2 6.1c0-.9.7-1.6 1.6-1.6h3l1.6 1.8h5.8c.9 0 1.6.7 1.6 1.6v6.4c0 .9-.7 1.6-1.6 1.6H4.8c-.9 0-1.6-.7-1.6-1.6z" />
+                      <path d="M10 9.5v4M8 11.5h4" />
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div id="tag-filter" class="tag-filter" data-feature="tags tags.filterBar"></div>
@@ -117,7 +284,7 @@
                   id="tree-filter"
                   class="tree-filter-input"
                   type="search"
-                  placeholder="Filter files by name or extension (*.jpg)"
+                  placeholder="Filter files"
                   autocomplete="off"
                   spellcheck="false"
                   aria-label="Filter repository files"
@@ -130,9 +297,6 @@
           <div id="root-drop-zone" class="root-drop-zone" hidden>
             Drop here to move to the repository root
           </div>
-          <div class="sidebar-footer">
-            <span class="root-drop-hint">Drop here to move to the root</span>
-          </div>
         </aside>
         <div
           id="pane-resizer"
@@ -140,9 +304,9 @@
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize sidebar"
-          aria-valuemin="200"
+          aria-valuemin="260"
           aria-valuemax="600"
-          aria-valuenow="292"
+          aria-valuenow="340"
           tabindex="0"
         ></div>
 
@@ -150,7 +314,7 @@
           <div id="repo-loading" class="repo-loading" role="status" aria-live="polite" hidden>
             <div class="repo-loading-card">
               <div class="spinner" aria-hidden="true"></div>
-              <strong id="repo-loading-title" class="repo-loading-title">Opening repository</strong>
+              <strong id="repo-loading-title" class="repo-loading-title">Loading repository</strong>
               <span id="repo-loading-copy" class="repo-loading-copy"></span>
             </div>
           </div>
@@ -164,22 +328,46 @@
             <p id="results-empty" class="muted" hidden>No matches.</p>
           </div>
 
-          <div id="empty-state" class="empty-state">
-            <div class="paper" aria-hidden="true"><span class="paper-cursor"></span></div>
-            <h1>Plain text, plain files.</h1>
-            <p>Open a folder as your repository. Every note stays a real file on disk, in the encoding and line endings it already uses.</p>
-            <ul id="welcome-repositories" class="short-list repository-list welcome-repositories" aria-label="Saved repositories" data-feature="recentRepositories recentRepositories.welcomeList"></ul>
-            <button id="empty-open" class="button primary" type="button">Open a folder</button>
+          <div id="empty-state" class="empty-view">
+            <header class="content-head">
+              <div class="content-heading">
+                <h1 id="empty-title">Files</h1>
+              </div>
+              <button id="empty-open" class="button primary content-primary" type="button">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                  <path d="M10 4.2v11.6M4.2 10h11.6" />
+                </svg>
+                <span>Open repository</span>
+              </button>
+            </header>
+            <div class="content-tabs" role="tablist" aria-label="File views">
+              <button class="content-tab is-active" type="button" role="tab" data-home-filter="all" aria-selected="true">All</button>
+              <button class="content-tab" type="button" role="tab" data-home-filter="pinned" aria-selected="false">Pinned</button>
+              <button class="content-tab" type="button" role="tab" data-home-filter="recent" aria-selected="false">Recent</button>
+            </div>
+            <div id="content-search-slot" class="content-search-slot"></div>
+            <div class="empty-body">
+              <div class="empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="8.25" />
+                  <path d="M12 7.5v5l3.2 2" />
+                </svg>
+              </div>
+              <p id="empty-copy" class="empty-copy">No files yet. Open a repository to begin editing plain-text files.</p>
+              <button id="empty-secondary" class="button content-secondary" type="button">Open repository</button>
+            </div>
+            <ul id="welcome-repositories" class="short-list repository-list welcome-repositories" aria-label="Saved repositories" data-feature="recentRepositories recentRepositories.welcomeList" hidden></ul>
           </div>
 
           <div id="editor-pane" class="editor-pane" hidden>
             <div class="file-header">
               <div class="file-title">
+                <span id="file-glyph" class="file-glyph file-header-glyph" aria-hidden="true"></span>
                 <strong id="file-name" class="file-name" tabindex="0" aria-describedby="file-path-tip"></strong>
                 <span id="file-path-tip" class="file-path-tip" role="tooltip"></span>
               </div>
-              <div class="file-actions">
-                <button id="wrap-toggle" class="button small" type="button" aria-pressed="false" data-feature="wrap wrap.toggle">Wrap off</button>
+              <div class="file-actions" data-layout-file-actions>
+                <button id="wrap-toggle" class="button small" type="button" aria-pressed="true" data-feature="wrap wrap.toggle">Wrap on</button>
                 <button id="save-button" class="button small primary" type="button">Save</button>
                 <button id="close-file" class="button small" type="button" title="Close (Ctrl+W)" aria-label="Close file">Close</button>
               </div>
@@ -194,7 +382,7 @@
         </section>
       </main>
 
-      <footer class="statusbar">
+      <footer class="statusbar" aria-label="Status bar">
         <span id="status-left" data-feature="repositoryCounts repositoryCounts.statusCounts"></span>
         <span class="status-center">
           <span id="status-message" class="status-message" role="status" aria-live="polite" hidden></span>
@@ -202,6 +390,8 @@
         <span id="status-right" data-feature="editorStats editorStats.statusWords"></span>
       </footer>
     </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <div id="context-menu" class="context-menu" role="menu" hidden></div>
 
@@ -312,6 +502,7 @@
         <div class="settings-body">
           <nav class="settings-nav" aria-label="Settings categories" role="tablist" aria-orientation="vertical">
             <button id="settings-tab-appearance" class="settings-nav-item" type="button" role="tab" aria-selected="true" aria-controls="settings-panel-appearance" data-settings-category="appearance">Appearance</button>
+            <button id="settings-tab-colors" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-colors" data-settings-category="colors">Icon colors</button>
             <button id="settings-tab-editor" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-editor" data-settings-category="editor">Editor</button>
             <button id="settings-tab-sidebar" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-sidebar" data-settings-category="sidebar">Sidebar &amp; Tree</button>
             <button id="settings-tab-search" class="settings-nav-item" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-search" data-settings-category="search">Search</button>
@@ -335,6 +526,7 @@
                 <select id="setting-theme">
                   <option value="system">Follow the system</option>
                   <option value="light">Light</option>
+                  <option value="white">White</option>
                   <option value="dark">Dark</option>
                   <option value="sepia">Sepia</option>
                   <option value="nord">Nord</option>
@@ -344,6 +536,61 @@
                   <option value="forest">Forest</option>
                 </select>
                 <p class="settings-help">"Follow the system" switches with your operating system theme.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Accent color" data-settings-help="Accent used for selections, buttons, links, and highlights.">
+                <label class="settings-label" for="setting-accent">Accent color</label>
+                <select id="setting-accent">
+                  <option value="theme">Theme default</option>
+                  <option value="blue">Blue</option>
+                  <option value="teal">Teal</option>
+                  <option value="green">Green</option>
+                  <option value="amber">Amber</option>
+                  <option value="orange">Orange</option>
+                  <option value="rose">Rose</option>
+                  <option value="violet">Violet</option>
+                  <option value="slate">Slate</option>
+                </select>
+                <p class="settings-help">Applies to every theme. Theme default keeps each theme's own accent.</p>
+              </div>
+              <div class="settings-field" data-settings-label="Content background" data-settings-help="Background of the file content pane. Editor text switches to stay readable.">
+                <label class="settings-label" for="setting-content-background">Content background</label>
+                <select id="setting-content-background">
+                  <option value="theme">Follow theme</option>
+                  <option value="white">White</option>
+                  <option value="paper">Paper</option>
+                  <option value="gray">Gray</option>
+                  <option value="dark">Dark</option>
+                  <option value="black">Black</option>
+                </select>
+                <p class="settings-help">Independent of the app theme. Editor text and syntax colors adapt automatically.</p>
+              </div>
+              <fieldset class="settings-group">
+                <legend>Window chrome</legend>
+                <p class="settings-help">Choose which pieces of desktop chrome are shown. The desktop menu layout matches the default look.</p>
+                <div class="settings-field" data-settings-label="Menu title bar" data-settings-help="Show both Application and Edit menus. Turn off to keep Application only.">
+                  <label class="accent-area"><input type="checkbox" id="setting-layout-menu-titlebar" /> Full menu title bar</label>
+                </div>
+                <div class="settings-field" data-settings-label="Status bar" data-settings-help="Show the repository counts, word counts, and transient messages in a bottom status bar.">
+                  <label class="accent-area"><input type="checkbox" id="setting-layout-statusbar" /> Status bar</label>
+                </div>
+                <div class="settings-field" data-settings-label="File header buttons" data-settings-help="Show Save, Close, and Wrap in the open file header instead of the menus.">
+                  <label class="accent-area"><input type="checkbox" id="setting-layout-file-actions" /> File header buttons</label>
+                </div>
+                <div class="inline-field">
+                  <button id="setting-layout-preset" class="button" type="button">Use desktop menu layout</button>
+                </div>
+              </fieldset>
+              <div class="settings-field" data-settings-label="Accent coverage" data-settings-help="Choose where the accent color appears across the app.">
+                <span class="settings-label">Accent coverage</span>
+                <div class="accent-areas">
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-titlebar" data-accent-area="titlebar" checked /> Title bar and toolbar</label>
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-fileheader" data-accent-area="fileHeader" checked /> File header</label>
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-statusbar" data-accent-area="statusbar" checked /> Status bar</label>
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-sidebar" data-accent-area="sidebar" checked /> Sidebar</label>
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-controls" data-accent-area="controls" checked /> Buttons, switches, and active states</label>
+                  <label class="accent-area"><input type="checkbox" id="setting-accent-editor" data-accent-area="editor" checked /> Editor caret and selection</label>
+                </div>
+                <p class="settings-help">Turn areas off to keep them neutral while the accent stays everywhere else.</p>
               </div>
               <div class="settings-field" data-settings-label="Font family" data-settings-help="Font family used by the editor.">
                 <label class="settings-label" for="setting-font-family">Font family</label>
@@ -355,18 +602,13 @@
                 <input id="setting-font-size" type="number" min="8" max="48" step="1" />
                 <p class="settings-help">Pixels, from 8 to 48.</p>
               </div>
-              <div class="settings-field" data-settings-label="Editor zoom" data-settings-help="Reset manual Ctrl+wheel zoom to the font size set above.">
-                <span class="settings-label">Editor zoom</span>
-                <div class="inline-field">
-                  <span id="settings-zoom-value" class="settings-value"></span>
-                  <button id="reset-editor-zoom" class="button" type="button" data-feature="zoom zoom.resetShortcut">Reset zoom</button>
-                </div>
-                <p class="settings-help">Ctrl+wheel changes the zoom while editing. Reset returns to the font size.</p>
-              </div>
             </section>
 
-            <section id="settings-panel-editor" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-editor" data-settings-panel="editor" hidden>
-              <div class="settings-panel-head">
+            <section id="settings-panel-colors" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-colors" data-settings-panel="colors" hidden>
+              <div id="settings-colors" class="settings-colors"></div>
+            </section>
+
+            <section id="settings-panel-editor" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-editor" data-settings-panel="editor" hidden>              <div class="settings-panel-head">
                 <h3>Editor</h3>
                 <button class="button small settings-reset" type="button" data-settings-reset="editor">Reset</button>
               </div>
@@ -377,22 +619,21 @@
               </div>
               <fieldset class="settings-group" data-feature="autosave autosave.settings">
                 <legend>Autosave</legend>
-                <p class="settings-help">Autosave only runs while the open file has unsaved changes.</p>
-                <div class="settings-field" data-settings-label="Autosave mode" data-settings-help="Off, after idle, or a fixed interval.">
-                  <label class="settings-label" for="setting-autosave-mode">Mode</label>
-                  <select id="setting-autosave-mode">
-                    <option value="off">Off</option>
-                    <option value="idle">After idle</option>
-                    <option value="interval">On interval</option>
-                  </select>
+                <p class="settings-help">Auto Save only runs while the open file has unsaved changes.</p>
+                <div class="settings-field" data-settings-label="Auto Save" data-settings-help="Save the open file after you stop typing for the delay below.">
+                  <label class="accent-area" for="setting-autosave-enabled">
+                    <input id="setting-autosave-enabled" type="checkbox" /> Auto Save
+                  </label>
                 </div>
-                <div class="settings-field" data-settings-label="Autosave idle seconds" data-settings-help="Seconds to wait after the last edit before autosaving. Range 1-60.">
-                  <label class="settings-label" for="setting-autosave-idle">Idle seconds</label>
-                  <input id="setting-autosave-idle" type="number" min="1" max="60" step="1" />
-                </div>
-                <div class="settings-field" data-settings-label="Autosave interval seconds" data-settings-help="Maximum seconds between autosaves while the file is dirty. Range 120-3600.">
-                  <label class="settings-label" for="setting-autosave-interval">Interval seconds</label>
-                  <input id="setting-autosave-interval" type="number" min="120" max="3600" step="1" />
+                <div class="settings-field" data-settings-label="Auto Save delay" data-settings-help="Idle time after the last change before saving. Range 1 second to 60 minutes.">
+                  <label class="settings-label" for="setting-autosave-idle">Save after</label>
+                  <div class="settings-duration">
+                    <input id="setting-autosave-idle" type="number" min="1" max="3600" step="1" />
+                    <select id="setting-autosave-unit">
+                      <option value="seconds">seconds</option>
+                      <option value="minutes">minutes</option>
+                    </select>
+                  </div>
                 </div>
               </fieldset>
               <fieldset class="settings-group" data-feature="revisions revisions.settings">
@@ -569,6 +810,12 @@
               <div class="settings-field" data-feature="about about.githubLink" data-settings-label="GitHub repository" data-settings-help="Project link placeholder until the repository is published.">
                 <span class="settings-label">GitHub</span>
                 <p id="settings-about-github" class="settings-value">Repository link not configured.</p>
+              </div>
+              <div class="settings-field" data-feature="about about.supportLink" data-settings-label="Show your appreciation" data-settings-help="Opens the Plainfold Ko-fi page in your browser.">
+                <span class="settings-label">Show your appreciation</span>
+                <p class="settings-value">
+                  <button id="settings-about-support" class="link-button" type="button" title="https://ko-fi.com/krisstian"><span class="support-heart" aria-hidden="true">♥</span><svg class="support-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13v5.5A4.5 4.5 0 0 1 12.5 18h-4A4.5 4.5 0 0 1 4 13.5V8Z" /><path d="M17 9h1.6a2.4 2.4 0 0 1 0 4.8H17" /><path d="M4 21h13" /><path d="M8.8 5.4c.7-.9 1.7-.5 1.7.5 0 .9-1.2 1.5-1.7 2-.5-.5-1.7-1.1-1.7-2 0-1 1-1.4 1.7-.5Z" fill="currentColor" stroke="none" /></svg><span>ko-fi.com/krisstian</span></button>
+                </p>
               </div>
               <p class="settings-note">Plainfold keeps your notes as plain text files on disk. Nothing is sent anywhere except the optional update check to api.github.com, and update checks can be turned off under Features.</p>
             </section>

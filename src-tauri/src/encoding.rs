@@ -124,17 +124,15 @@ pub fn decode(bytes: &[u8]) -> Decoded {
     let text = match encoding {
         TextEncoding::Utf8 { .. } => match std::str::from_utf8(source) {
             Ok(value) => value.to_string(),
-            Err(_) => {
-                return Decoded {
-                    text: String::from_utf8_lossy(source).into_owned(),
-                    encoding,
-                    eol: detect_eol(bytes),
-                    read_only: Some(
-                        "This file is not valid UTF-8 or a BOM-marked UTF-16 file, so it is read-only."
-                            .into(),
-                    ),
-                }
-            }
+            Err(_) => return Decoded {
+                text: String::from_utf8_lossy(source).into_owned(),
+                encoding,
+                eol: detect_eol(bytes),
+                read_only: Some(
+                    "This file is not valid UTF-8 or a BOM-marked UTF-16 file, so it is read-only."
+                        .into(),
+                ),
+            },
         },
         TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
             if source.len() % 2 != 0 {
@@ -143,9 +141,7 @@ pub fn decode(bytes: &[u8]) -> Decoded {
                         &source
                             .chunks_exact(2)
                             .map(|pair| match encoding {
-                                TextEncoding::Utf16Le => {
-                                    u16::from_le_bytes([pair[0], pair[1]])
-                                }
+                                TextEncoding::Utf16Le => u16::from_le_bytes([pair[0], pair[1]]),
                                 _ => u16::from_be_bytes([pair[0], pair[1]]),
                             })
                             .collect::<Vec<_>>(),
@@ -273,11 +269,7 @@ mod tests {
 
     #[test]
     fn round_trips_utf8_bom_crlf() {
-        let bytes = encode(
-            "one\ntwo\n",
-            TextEncoding::Utf8 { bom: true },
-            Eol::Crlf,
-        );
+        let bytes = encode("one\ntwo\n", TextEncoding::Utf8 { bom: true }, Eol::Crlf);
         assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF]);
         assert_eq!(&bytes[3..], b"one\r\ntwo\r\n");
         let decoded = decode(&bytes);

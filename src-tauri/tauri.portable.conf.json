@@ -1,0 +1,9 @@
+{
+  "identifier": "com.plainfold.app.portable",
+  "app": {
+    "appDirectoriesOverride": "Plainfold-data"
+  },
+  "bundle": {
+    "active": false
+  }
+}

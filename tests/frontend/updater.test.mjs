@@ -84,6 +84,8 @@ test("placeholder source is inert and makes no request", async () => {
   let requested = false;
   const result = await checkForUpdate({
     currentVersion: "1.1.27",
+    owner: "your-github-user",
+    repo: "plainfold",
     fetchImpl: async () => {
       requested = true;
       throw new Error("network must not be used");
@@ -91,7 +93,7 @@ test("placeholder source is inert and makes no request", async () => {
   });
 
   assert.equal(requested, false);
-  assert.equal(updateSourceConfigured(), false);
+  assert.equal(updateSourceConfigured("your-github-user", "plainfold"), false);
   assert.deepEqual(result, {
     configured: false,
     currentVersion: "1.1.27",
@@ -323,6 +325,8 @@ test("maybeCheckForUpdate is inert with the placeholder source", async () => {
   let calls = 0;
   const result = await maybeCheckForUpdate({
     currentVersion: "1.1.27",
+    owner: "your-github-user",
+    repo: "plainfold",
     fetchImpl: async () => {
       calls += 1;
       return jsonResponse({});

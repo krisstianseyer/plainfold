@@ -75,7 +75,9 @@ impl History {
     }
 
     pub fn peek_undo(&self) -> Option<(&str, &UndoAction)> {
-        self.stack.last().map(|entry| (entry.label.as_str(), &entry.action))
+        self.stack
+            .last()
+            .map(|entry| (entry.label.as_str(), &entry.action))
     }
 
     pub fn pop_undo(&mut self) -> Option<(String, UndoAction)> {
@@ -169,8 +171,7 @@ pub fn restore(repository: &Repository, entry: &TrashedEntry) -> AppResult<Strin
             .map_err(|_| AppError::new("The folder for that item could not be recreated."))?;
     }
     copy_tree(&backup, &target)?;
-    Ok(crate::paths::relative_to(repository.root(), &target)
-        .unwrap_or_else(|| entry.path.clone()))
+    Ok(crate::paths::relative_to(repository.root(), &target).unwrap_or_else(|| entry.path.clone()))
 }
 
 fn free_name(target: &Path) -> PathBuf {
@@ -305,7 +306,10 @@ mod tests {
             },
         );
         assert_eq!(history.state().redo_label, None);
-        assert_eq!(history.state().undo_label.as_deref(), Some("creating b.txt"));
+        assert_eq!(
+            history.state().undo_label.as_deref(),
+            Some("creating b.txt")
+        );
     }
 
     #[test]

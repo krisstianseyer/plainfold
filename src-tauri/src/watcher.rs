@@ -262,10 +262,19 @@ mod tests {
         let database = index_database_path(dir.path(), repository.root());
         let mut index = Index::open(&database, repository.root()).unwrap();
         index
-            .upsert_file("note.txt", "note.txt", meta.len() as i64, mtime, Some("hello world\n"))
+            .upsert_file(
+                "note.txt",
+                "note.txt",
+                meta.len() as i64,
+                mtime,
+                Some("hello world\n"),
+            )
             .unwrap();
 
-        assert_eq!(index.file_meta("note.txt"), Some((meta.len() as i64, mtime)));
+        assert_eq!(
+            index.file_meta("note.txt"),
+            Some((meta.len() as i64, mtime))
+        );
         // A file the index has never seen is reported.
         assert_eq!(index.file_meta("other.txt"), None);
     }
@@ -285,7 +294,11 @@ mod tests {
                 "note.txt",
                 "note.txt",
                 before.len() as i64,
-                before.modified().ok().map(crate::repository::system_ms).unwrap_or_default(),
+                before
+                    .modified()
+                    .ok()
+                    .map(crate::repository::system_ms)
+                    .unwrap_or_default(),
                 Some("one\n"),
             )
             .unwrap();
@@ -293,7 +306,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&path, b"one and two\n").unwrap();
         let after = std::fs::metadata(&path).unwrap();
-        let after_mtime = after.modified().ok().map(crate::repository::system_ms).unwrap_or_default();
+        let after_mtime = after
+            .modified()
+            .ok()
+            .map(crate::repository::system_ms)
+            .unwrap_or_default();
         let recorded = index.file_meta("note.txt").unwrap();
         assert!(
             recorded.0 != after.len() as i64 || recorded.1 != after_mtime,
