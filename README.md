@@ -38,7 +38,7 @@ Version 1.2.0 adds:
 - Settings v2: left category navigation, search, auto-save, per-section reset, and a Features tab with 21 feature groups plus advanced per-control toggles. The safety floor cannot be disabled.
 - Recent repositories and multiple saved repositories with one active repository. The saved list appears in the sidebar above Pinned and on the welcome screen. Startup reopens the last active repository unless a startup repository is configured. Removing an entry only removes it from the list; it never deletes files from disk.
 - "Rebuild search index" moved to Settings > Maintenance. The toolbar Rescan button is gone.
-- An automatic, notify-only GitHub Releases update check on launch, with a Settings toggle. The update source is a placeholder in `src/updater.js`, so the check stays inert until it is configured.
+- An automatic, notify-only GitHub Releases update check on launch, with a Settings toggle. The update source is a placeholder in `src/updater.ts`, so the check stays inert until it is configured.
 
 The v1.2.0 release round builds the front-end bundle and the release binary only. It does not build installers.
 
@@ -120,6 +120,7 @@ Front end, pinned exactly in `package.json`:
 - `@codemirror/legacy-modes`: shell highlighting for `.bat` files.
 - `@lezer/highlight`: syntax tag names for the White theme's editor palette.
 - `vite`: front-end bundler. Nothing is loaded from a CDN at runtime.
+- `typescript` (dev only): the front end is TypeScript. `npm run typecheck` runs `tsc --noEmit` with `strict` on, and `npm run build` refuses to bundle if the type check fails. Backend payload shapes live in `src/types.ts` and mirror the serde structs in `src-tauri/src`.
 
 Rust, pinned exactly in `src-tauri/Cargo.toml`:
 

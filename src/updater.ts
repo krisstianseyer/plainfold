@@ -29,27 +29,99 @@ const ERROR_CANCELLED = "The update check was cancelled.";
 const ERROR_UNCONFIGURED =
   "Update checks are inactive until an update source is configured.";
 
+/** Result shape shared by `checkForUpdate` and `maybeCheckForUpdate`. */
+interface UpdateResult {
+  configured: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  error: string | null;
+  checkedAt: number | null;
+}
+
+interface CheckForUpdateOptions {
+  currentVersion?: string;
+  fetchImpl?: FetchLike | null;
+  signal?: AbortSignal | null;
+  owner?: string;
+  repo?: string;
+}
+
+interface MaybeCheckForUpdateOptions {
+  currentVersion?: string;
+  lastChecked?: number | null;
+  fetchImpl?: FetchLike | null;
+  owner?: string;
+  repo?: string;
+}
+
+/**
+ * Minimal fetch surface: callers may inject a stub that returns no response at
+ * all, which the network error path already handles.
+ */
+type FetchLike = (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => Promise<Response | null | undefined>;
+
+/**
+ * The GitHub release fields this module reads. Every field is optional and
+ * checked before use because the response is untrusted JSON.
+ */
+interface GitHubRelease {
+  draft?: boolean;
+  prerelease?: boolean;
+  tag_name?: string;
+  html_url?: string;
+}
+
+/** Narrow parsed JSON to a property bag without trusting any field. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** Read `name` off a caught value without assuming it is an Error. */
+function errorName(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  return typeof value.name === "string" ? value.name : undefined;
+}
+
+/**
+ * Copy only the release fields that passed a per-field check. Unknown or
+ * mistyped members are dropped instead of trusted.
+ */
+function readRelease(value: unknown): GitHubRelease | null {
+  if (!isRecord(value)) return null;
+  const release: GitHubRelease = {};
+  if (value.draft === true) release.draft = true;
+  if (value.prerelease === true) release.prerelease = true;
+  if (typeof value.tag_name === "string") release.tag_name = value.tag_name;
+  if (typeof value.html_url === "string") release.html_url = value.html_url;
+  return release;
+}
+
 /** True once a real GitHub owner/repository has been configured. */
 export function updateSourceConfigured(
-  owner = UPDATE_OWNER,
-  repo = UPDATE_REPO
-) {
+  owner: string = UPDATE_OWNER,
+  repo: string = UPDATE_REPO
+): boolean {
   return Boolean(owner && repo && owner !== PLACEHOLDER_OWNER);
 }
 
 /** Human-readable source line for Settings > Updates and About. */
-export function updateSourceLabel() {
+export function updateSourceLabel(): string {
   return updateSourceConfigured()
     ? `GitHub Releases (${UPDATE_OWNER}/${UPDATE_REPO})`
     : "GitHub Releases (not configured)";
 }
 
 /** Settings > Updates status line for the inert placeholder state. */
-export function updateInactiveStatus() {
+export function updateInactiveStatus(): string {
   return ERROR_UNCONFIGURED;
 }
 
-function versionParts(value) {
+function versionParts(value: unknown): number[] {
   const text = String(value ?? "")
     .trim()
     .replace(/^v/i, "")
@@ -61,7 +133,7 @@ function versionParts(value) {
 }
 
 /** Compare numeric X.Y.Z versions. Returns -1, 0, or 1. */
-export function compareVersions(a, b) {
+export function compareVersions(a: unknown, b: unknown): -1 | 0 | 1 {
   const left = versionParts(a);
   const right = versionParts(b);
   const length = Math.max(left.length, right.length, 3);
@@ -75,13 +147,13 @@ export function compareVersions(a, b) {
 }
 
 /** Plain display form of a release tag: "v1.2.0" becomes "1.2.0". */
-function normalizeVersion(value) {
+function normalizeVersion(value: unknown): string {
   return String(value ?? "")
     .trim()
     .replace(/^v/i, "");
 }
 
-function releaseApiUrl(owner, repo) {
+function releaseApiUrl(owner: string, repo: string): string {
   return `${GITHUB_API_HOST}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`;
 }
 
@@ -89,7 +161,10 @@ function releaseApiUrl(owner, repo) {
  * Optional source override exists only so tests can exercise the configured
  * path without editing the constants. The app never passes it.
  */
-function resultFor(options, fields) {
+function resultFor(
+  options: CheckForUpdateOptions,
+  fields: Partial<UpdateResult>
+): UpdateResult {
   const owner = options?.owner ?? UPDATE_OWNER;
   const repo = options?.repo ?? UPDATE_REPO;
   return {
@@ -104,7 +179,7 @@ function resultFor(options, fields) {
   };
 }
 
-function safeStorageGet(key) {
+function safeStorageGet(key: string): string | null {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;
   } catch {
@@ -112,7 +187,7 @@ function safeStorageGet(key) {
   }
 }
 
-function safeStorageSet(key, value) {
+function safeStorageSet(key: string, value: unknown): void {
   try {
     globalThis.localStorage?.setItem(key, String(value));
   } catch {
@@ -121,26 +196,26 @@ function safeStorageSet(key, value) {
 }
 
 /** Milliseconds of the last launch check, or null when never recorded. */
-export function readLastChecked() {
+export function readLastChecked(): number | null {
   const raw = Number(safeStorageGet(UPDATE_LAST_CHECK_KEY));
   return Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
 /** Version the user dismissed, or null. */
-export function readDismissedVersion() {
+export function readDismissedVersion(): string | null {
   const value = safeStorageGet(UPDATE_DISMISSED_KEY);
   return value ? normalizeVersion(value) : null;
 }
 
 /** Remember a dismissed version so its banner is not shown again. */
-export function dismissUpdate(version) {
+export function dismissUpdate(version: unknown): void {
   const normalized = normalizeVersion(version);
   if (!normalized) return;
   safeStorageSet(UPDATE_DISMISSED_KEY, normalized);
 }
 
 /** True when this exact release version was dismissed. */
-export function isUpdateDismissed(version) {
+export function isUpdateDismissed(version: unknown): boolean {
   const normalized = normalizeVersion(version);
   if (!normalized) return false;
   return readDismissedVersion() === normalized;
@@ -156,7 +231,7 @@ export async function checkForUpdate({
   signal,
   owner = UPDATE_OWNER,
   repo = UPDATE_REPO,
-} = {}) {
+}: CheckForUpdateOptions = {}): Promise<UpdateResult> {
   const options = { currentVersion, owner, repo };
   if (!updateSourceConfigured(owner, repo)) {
     return resultFor(options, {});
@@ -171,7 +246,7 @@ export async function checkForUpdate({
 
   const controller = new AbortController();
   let timedOut = false;
-  let removeExternalAbort = null;
+  let removeExternalAbort: (() => void) | null = null;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
@@ -198,7 +273,7 @@ export async function checkForUpdate({
 
     if (!response || !response.ok) {
       const status = Number(response?.status);
-      let error;
+      let error: string;
       if (status === 404) error = ERROR_NO_RELEASES;
       else if (status === 403 || status === 429) error = ERROR_NOT_ALLOWED;
       else if (Number.isFinite(status) && status > 0) {
@@ -209,7 +284,7 @@ export async function checkForUpdate({
       return resultFor(options, { error, checkedAt: checkedAt() });
     }
 
-    let payload;
+    let payload: unknown;
     try {
       payload = await response.json();
     } catch {
@@ -226,12 +301,20 @@ export async function checkForUpdate({
       });
     }
 
-    if (payload.draft === true || payload.prerelease === true) {
+    const release = readRelease(payload);
+    if (!release) {
+      return resultFor(options, {
+        error: ERROR_UNREADABLE,
+        checkedAt: checkedAt(),
+      });
+    }
+
+    if (release.draft === true || release.prerelease === true) {
       // Drafts and prereleases are not offered to users of the stable line.
       return resultFor(options, { checkedAt: checkedAt() });
     }
 
-    const latestVersion = normalizeVersion(payload.tag_name);
+    const latestVersion = normalizeVersion(release.tag_name);
     if (!latestVersion) {
       return resultFor(options, {
         error: ERROR_NO_VERSION,
@@ -239,10 +322,7 @@ export async function checkForUpdate({
       });
     }
 
-    const releaseUrl =
-      typeof payload.html_url === "string" && payload.html_url
-        ? payload.html_url
-        : null;
+    const releaseUrl = release.html_url ? release.html_url : null;
 
     return resultFor(options, {
       latestVersion,
@@ -254,7 +334,7 @@ export async function checkForUpdate({
     let message = ERROR_UNREACHABLE;
     if (timedOut) message = ERROR_TIMEOUT;
     else if (signal?.aborted) message = ERROR_CANCELLED;
-    else if (error?.name === "AbortError") message = ERROR_TIMEOUT;
+    else if (errorName(error) === "AbortError") message = ERROR_TIMEOUT;
     return resultFor(options, { error: message, checkedAt: checkedAt() });
   } finally {
     clearTimeout(timer);
@@ -263,7 +343,9 @@ export async function checkForUpdate({
 }
 
 /** Remember when a check finished, including a manual Settings check. */
-export function recordUpdateCheck(timestamp = Date.now()) {
+export function recordUpdateCheck(
+  timestamp: number | string = Date.now()
+): number | null {
   const value = Number(timestamp);
   if (!Number.isFinite(value) || value <= 0) return null;
   safeStorageSet(UPDATE_LAST_CHECK_KEY, value);
@@ -281,7 +363,7 @@ export async function maybeCheckForUpdate({
   fetchImpl,
   owner = UPDATE_OWNER,
   repo = UPDATE_REPO,
-} = {}) {
+}: MaybeCheckForUpdateOptions = {}): Promise<UpdateResult | null> {
   if (!updateSourceConfigured(owner, repo)) return null;
 
   const previous = Number(lastChecked ?? readLastChecked());
@@ -303,7 +385,7 @@ export async function maybeCheckForUpdate({
 }
 
 /** The release URL is opened by the backend; the front end never navigates. */
-export function isAllowedReleaseUrl(url) {
+export function isAllowedReleaseUrl(url: unknown): boolean {
   if (typeof url !== "string" || url.length > 2048) return false;
   return url.startsWith(GITHUB_RELEASE_HOST);
 }

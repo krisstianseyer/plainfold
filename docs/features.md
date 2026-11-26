@@ -141,7 +141,7 @@ Plainfold can check GitHub Releases for a newer version on launch. The check is 
 - The app's only network destination is `https://api.github.com`.
 - There is no telemetry, account, token, or identifier. The request is an ordinary HTTPS request; as with any HTTPS request, GitHub sees the connection's IP address and standard request headers. No repository path or file content is sent.
 
-The update source is configured in `src/updater.js`:
+The update source is configured in `src/updater.ts`:
 
 ```js
 const UPDATE_OWNER = "krisstianseyer";

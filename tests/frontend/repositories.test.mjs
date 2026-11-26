@@ -15,7 +15,7 @@ import {
   repositoryFallbackName,
   repositoryLastAfterRemoval,
   sameRepositoryPath,
-} from "../../src/repositories.js";
+} from "../../src/repositories.ts";
 
 test("normalizeRepositoryEntries accepts paths and partial objects", () => {
   const entries = normalizeRepositoryEntries([

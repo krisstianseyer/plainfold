@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { linkAt } from "../../src/link-utils.js";
+import { linkAt } from "../../src/link-utils.ts";
 
 test("linkAt returns the link under the cursor", () => {
   const line = "See [[notes/day.txt]] for details.";

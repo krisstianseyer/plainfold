@@ -12,7 +12,7 @@ import {
   groupOf,
   labelFor,
   labels,
-} from "../../src/features.js";
+} from "../../src/features.ts";
 
 const EXPECTED_GROUPS = [
   "search",

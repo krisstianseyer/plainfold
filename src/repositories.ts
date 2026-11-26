@@ -6,14 +6,38 @@
  * or the Tauri API directly.
  */
 
+import type { RepositoryEntry, RepositoryInfo } from "./types.ts";
+
 export const REPOSITORY_LIMIT_MIN = 1;
 export const REPOSITORY_LIMIT_MAX = 20;
 export const REPOSITORY_LIMIT_DEFAULT = 8;
 export const REPOSITORY_FEATURE = "recentRepositories";
 export const REPOSITORY_REMOVE_FEATURE = "recentRepositories.removeAction";
 
+/** Values accepted wherever the saved-repository display limit is read. */
+export type RepositoryLimitInput = number | string | null | undefined;
+
+/** A saved repository, its path, or nothing; the helpers accept all three. */
+export type RepositoryReference =
+  | string
+  | RepositoryInfo
+  | RepositoryEntry
+  | null
+  | undefined;
+
+/**
+ * Reads one optional property from an unknown value, keeping the original
+ * `item?.field` semantics for strings, objects, and absent values.
+ */
+function entryField(
+  value: unknown,
+  key: "path" | "name" | "exists"
+): unknown {
+  return (value as Record<string, unknown> | null | undefined)?.[key];
+}
+
 /** Last path segment, used when the backend does not supply a name. */
-export function repositoryFallbackName(path) {
+export function repositoryFallbackName(path: unknown): string {
   const text = String(path ?? "");
   // A drive root has no last segment; show the root itself rather than "C:".
   if (/^[A-Za-z]:[\\/]*$/.test(text) || text === "/") return text;
@@ -21,7 +45,7 @@ export function repositoryFallbackName(path) {
   return parts[parts.length - 1] ?? text;
 }
 
-function windowsPath(path) {
+function windowsPath(path: unknown): boolean {
   const text = String(path ?? "");
   // Canonical saved paths are absolute: drive roots and UNC shares are
   // Windows paths, POSIX paths stay case-sensitive.
@@ -29,13 +53,13 @@ function windowsPath(path) {
 }
 
 /** Compare keys the same way the backend does: case-insensitive on Windows. */
-export function repositoryPathKey(path) {
+export function repositoryPathKey(path: unknown): string {
   const text = String(path ?? "");
   return windowsPath(text) ? text.toLowerCase() : text;
 }
 
 /** True when two paths point at the same saved repository. */
-export function sameRepositoryPath(left, right) {
+export function sameRepositoryPath(left: unknown, right: unknown): boolean {
   let one = String(left ?? "");
   let two = String(right ?? "");
   // Ignore a trailing separator on normal paths, but leave drive roots and
@@ -50,28 +74,33 @@ export function sameRepositoryPath(left, right) {
  * objects. Accepts plain path strings and partial objects, deduplicates paths,
  * never throws, and treats a missing `exists` flag as present.
  */
-export function normalizeRepositoryEntries(value) {
+export function normalizeRepositoryEntries(value: unknown): RepositoryEntry[] {
   if (!Array.isArray(value)) return [];
-  const seen = new Set();
-  const entries = [];
-  for (const item of value) {
-    const rawPath = typeof item === "string" ? item : item?.path;
+  const items: readonly unknown[] = value;
+  const seen = new Set<string>();
+  const entries: RepositoryEntry[] = [];
+  for (const item of items) {
+    const rawPath = typeof item === "string" ? item : entryField(item, "path");
     if (typeof rawPath !== "string" || !rawPath.trim()) continue;
     const key = repositoryPathKey(rawPath);
     if (seen.has(key)) continue;
     seen.add(key);
-    const rawName = typeof item?.name === "string" ? item.name.trim() : "";
+    const nameValue = entryField(item, "name");
+    const rawName = typeof nameValue === "string" ? nameValue.trim() : "";
     entries.push({
       path: rawPath,
       name: rawName || repositoryFallbackName(rawPath),
-      exists: item?.exists !== false,
+      exists: entryField(item, "exists") !== false,
     });
   }
   return entries;
 }
 
 /** Clamp the saved-repository display limit to the agreed 1-20 range. */
-export function clampRepositoryLimit(value, fallback = REPOSITORY_LIMIT_DEFAULT) {
+export function clampRepositoryLimit(
+  value: RepositoryLimitInput,
+  fallback: number = REPOSITORY_LIMIT_DEFAULT
+): number {
   if (value === null || value === undefined || value === "") return fallback;
   const number = Math.round(Number(value));
   if (!Number.isFinite(number)) return fallback;
@@ -82,8 +111,11 @@ export function clampRepositoryLimit(value, fallback = REPOSITORY_LIMIT_DEFAULT)
 }
 
 /** Keep at most `limit` rich entries, in their existing order. */
-export function limitRepositoryEntries(entries, limit = REPOSITORY_LIMIT_DEFAULT) {
-  const list = Array.isArray(entries) ? entries : [];
+export function limitRepositoryEntries(
+  entries: readonly RepositoryEntry[] | null | undefined,
+  limit: RepositoryLimitInput = REPOSITORY_LIMIT_DEFAULT
+): RepositoryEntry[] {
+  const list: readonly RepositoryEntry[] = Array.isArray(entries) ? entries : [];
   return list.slice(0, clampRepositoryLimit(limit));
 }
 
@@ -91,13 +123,22 @@ export function limitRepositoryEntries(entries, limit = REPOSITORY_LIMIT_DEFAULT
  * Keep the rich metadata for paths the server still reports, in server order.
  * Used when a settings response refreshes the path list without `exists`.
  */
-export function reconcileRepositoryEntries(entries, paths) {
+export function reconcileRepositoryEntries(
+  entries: unknown,
+  paths: unknown
+): RepositoryEntry[] {
   const rich = normalizeRepositoryEntries(entries);
   if (!Array.isArray(paths)) return rich;
-  const byKey = new Map(rich.map((entry) => [repositoryPathKey(entry.path), entry]));
-  const result = [];
-  const seen = new Set();
-  for (const raw of paths) {
+  const pathList: readonly unknown[] = paths;
+  const byKey = new Map<string, RepositoryEntry>(
+    rich.map((entry): [string, RepositoryEntry] => [
+      repositoryPathKey(entry.path),
+      entry,
+    ])
+  );
+  const result: RepositoryEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of pathList) {
     if (typeof raw !== "string" || !raw.trim()) continue;
     const key = repositoryPathKey(raw);
     if (seen.has(key)) continue;
@@ -114,22 +155,33 @@ export function reconcileRepositoryEntries(entries, paths) {
 }
 
 /** Find a saved entry by path, preserving rich metadata. */
-export function findRepositoryEntry(entries, path) {
-  const list = Array.isArray(entries) ? entries : [];
+export function findRepositoryEntry(
+  entries: readonly RepositoryEntry[] | null | undefined,
+  path: unknown
+): RepositoryEntry | null {
+  const list: readonly RepositoryEntry[] = Array.isArray(entries) ? entries : [];
   return list.find((entry) => sameRepositoryPath(entry.path, path)) ?? null;
 }
 
 /** True when an entry is the currently open repository. */
-export function repositoryEntryIsActive(entry, repository) {
-  const entryPath = typeof entry === "string" ? entry : entry?.path;
+export function repositoryEntryIsActive(
+  entry: unknown,
+  repository: unknown
+): boolean {
+  const entryPath = typeof entry === "string" ? entry : entryField(entry, "path");
   const repositoryPath =
-    typeof repository === "string" ? repository : repository?.path;
+    typeof repository === "string"
+      ? repository
+      : entryField(repository, "path");
   if (!entryPath || !repositoryPath) return false;
   return sameRepositoryPath(entryPath, repositoryPath);
 }
 
 /** Entries that may be removed: everything except the active repository. */
-export function removableRepositoryEntries(entries, repository) {
+export function removableRepositoryEntries(
+  entries: unknown,
+  repository: unknown
+): RepositoryEntry[] {
   return normalizeRepositoryEntries(entries).filter(
     (entry) => !repositoryEntryIsActive(entry, repository)
   );
@@ -139,26 +191,60 @@ export function removableRepositoryEntries(entries, repository) {
  * The last-opened pointer after one entry is removed. It only moves when the
  * removed entry was the last-opened one, matching the backend command.
  */
-export function repositoryLastAfterRemoval(entries, lastPath, removedPath) {
+export function repositoryLastAfterRemoval(
+  entries: unknown,
+  lastPath: string | null | undefined,
+  removedPath: unknown
+): string | null {
   if (!lastPath || !sameRepositoryPath(lastPath, removedPath)) {
     return lastPath ?? null;
   }
   return normalizeRepositoryEntries(entries)[0]?.path ?? null;
 }
 
-function errorMessage(error, fallback) {
+function errorMessage(
+  error: unknown,
+  fallback?: string | null
+): string {
   if (typeof error === "string" && error) return error;
-  if (error && typeof error.message === "string" && error.message) {
-    return error.message;
+  if (
+    error &&
+    typeof (error as { message?: unknown }).message === "string" &&
+    (error as { message: string }).message
+  ) {
+    return (error as { message: string }).message;
   }
   return fallback ?? "The operation could not be completed.";
+}
+
+/** Per-row callbacks for {@link createRepositoryListItem}. */
+export interface RepositoryItemOptions {
+  active?: boolean;
+  canRemove?: boolean;
+  onActivate?: (entry: RepositoryEntry) => void;
+  onRemove?: (entry: RepositoryEntry) => void;
+  decorate?: (
+    button: HTMLButtonElement,
+    name: HTMLElement,
+    entry: RepositoryEntry
+  ) => void;
+  onContextMenu?: (event: MouseEvent, entry: RepositoryEntry) => void;
+}
+
+/** Options for {@link renderRepositoryList}; extends the row options. */
+export interface RepositoryListOptions extends RepositoryItemOptions {
+  emptyText?: string;
+  isActive?: (entry: RepositoryEntry) => boolean;
 }
 
 /**
  * One saved-repository row. Entries are buttons. The remove control is a
  * sibling button so interactive elements are never nested.
  */
-export function createRepositoryListItem(entry, options = {}) {
+export function createRepositoryListItem(
+  entry: RepositoryEntry,
+  options: RepositoryItemOptions = {}
+): HTMLLIElement {
   const li = document.createElement("li");
   const active = Boolean(options.active);
   li.dataset.repositoryPath = entry.path;
@@ -233,10 +319,14 @@ export function createRepositoryListItem(entry, options = {}) {
 }
 
 /** Render a list of rich entries into a `ul`. Empty wording is configurable. */
-export function renderRepositoryList(list, entries, options = {}) {
+export function renderRepositoryList(
+  list: Element | null | undefined,
+  entries: readonly RepositoryEntry[] | null | undefined,
+  options: RepositoryListOptions = {}
+): void {
   if (!list) return;
   list.textContent = "";
-  const items = Array.isArray(entries) ? entries : [];
+  const items: readonly RepositoryEntry[] = Array.isArray(entries) ? entries : [];
   if (!items.length) {
     if (!options.emptyText) return;
     const empty = document.createElement("li");
@@ -255,28 +345,87 @@ export function renderRepositoryList(list, entries, options = {}) {
   }
 }
 
-let dependencies = null;
+/** DOM targets the service renders into. */
+export interface RepositoryServiceElements {
+  sidebar?: Element | null;
+  welcome?: Element | null;
+  settings?: Element | null;
+}
+
+/** The slice of application state the service reads. */
+export interface RepositoryServiceState {
+  repository?: RepositoryInfo | null;
+}
+
+/** Optional metadata handed to `setEntries` after a list change. */
+export interface RepositoryEntryMeta {
+  removedPath?: string | null;
+}
+
+/** Callbacks and elements supplied by `main.ts` when the service is wired. */
+export interface RepositoryServiceOptions {
+  getState?: () => RepositoryServiceState | null;
+  getEntries?: () => RepositoryEntry[] | null | undefined;
+  getSavedEntries?: () => RepositoryEntry[] | null | undefined;
+  setEntries?: (entries: RepositoryEntry[], meta: RepositoryEntryMeta) => void;
+  getLimit?: () => number;
+  isFeatureOn?: (feature: string) => boolean;
+  activateRepository?: (path: string) => boolean | void | Promise<boolean | void>;
+  removeRecentRepository?: (
+    path: string
+  ) =>
+    | RepositoryEntry[]
+    | boolean
+    | void
+    | Promise<RepositoryEntry[] | boolean | void>;
+  setStatus?: (message: string) => void;
+  decorateRepository?: (
+    button: HTMLButtonElement,
+    name: HTMLElement,
+    entry: RepositoryEntry
+  ) => void;
+  onRepositoryContextMenu?: (event: MouseEvent, entry: RepositoryEntry) => void;
+  elements?: RepositoryServiceElements;
+}
+
+/** The saved-repositories service object exported from this module. */
+export interface RepositoriesService {
+  readonly configured: boolean;
+  entries(): RepositoryEntry[];
+  savedEntries(): RepositoryEntry[];
+  renderSidebar(): void;
+  renderWelcome(): void;
+  renderSettingsList(): void;
+  renderAll(): void;
+  switchTo(entryOrPath: RepositoryReference): Promise<boolean>;
+  removeRecent(entryOrPath: RepositoryReference): Promise<boolean>;
+  clearRecent(): Promise<boolean>;
+}
+
+let dependencies: RepositoryServiceOptions | null = null;
 let busy = false;
 
 /** Wire the service from main.js. No application imports live in this module. */
-export function configureRepositories(options) {
+export function configureRepositories(
+  options: RepositoryServiceOptions | null | undefined
+): RepositoriesService {
   dependencies = options && typeof options === "object" ? options : null;
   return repositories;
 }
 
-function state() {
+function state(): RepositoryServiceState | null {
   return dependencies?.getState?.() ?? null;
 }
 
-function activeRepository() {
+function activeRepository(): RepositoryInfo | null {
   return state()?.repository ?? null;
 }
 
-function allEntries() {
+function allEntries(): RepositoryEntry[] {
   return normalizeRepositoryEntries(dependencies?.getEntries?.() ?? []);
 }
 
-function currentRepositoryList() {
+function currentRepositoryList(): Element | null {
   if (typeof document === "undefined") return null;
   return (
     document.activeElement?.closest?.(
@@ -285,16 +434,22 @@ function currentRepositoryList() {
   );
 }
 
-function focusEntry(path, preferredList = null) {
+function focusEntry(
+  path: string | null | undefined,
+  preferredList: Element | null = null
+): boolean {
   if (!path || typeof document === "undefined") return false;
-  for (const list of [
+  const lists: (Element | null | undefined)[] = [
     preferredList,
     dependencies?.elements?.sidebar,
     dependencies?.elements?.welcome,
     dependencies?.elements?.settings,
-  ]) {
+  ];
+  for (const list of lists) {
     if (!list) continue;
-    const buttons = list.querySelectorAll?.("button.repository-entry") ?? [];
+    const buttons = list.querySelectorAll<HTMLButtonElement>(
+      "button.repository-entry"
+    );
     for (const button of buttons) {
       if (
         !button.disabled &&
@@ -308,7 +463,10 @@ function focusEntry(path, preferredList = null) {
   return false;
 }
 
-function nextFocusPath(entries, path) {
+function nextFocusPath(
+  entries: readonly RepositoryEntry[],
+  path: unknown
+): string | null {
   const index = entries.findIndex((entry) =>
     sameRepositoryPath(entry.path, path)
   );
@@ -316,7 +474,10 @@ function nextFocusPath(entries, path) {
   return (entries[index + 1] ?? entries[index - 1])?.path ?? null;
 }
 
-function setEntries(entries, meta = {}) {
+function setEntries(
+  entries: unknown,
+  meta: RepositoryEntryMeta = {}
+): RepositoryEntry[] {
   const normalized = normalizeRepositoryEntries(entries);
   dependencies?.setEntries?.(normalized, meta);
   return normalized;
@@ -326,7 +487,10 @@ function setEntries(entries, meta = {}) {
  * Update the saved list from a `remove_recent_repository` response. Older
  * backends that return only a boolean fall back to filtering the old list.
  */
-function applyRemovalResult(path, returned) {
+function applyRemovalResult(
+  path: string,
+  returned: unknown
+): RepositoryEntry[] {
   if (Array.isArray(returned)) {
     return setEntries(returned, { removedPath: path });
   }
@@ -336,7 +500,7 @@ function applyRemovalResult(path, returned) {
   );
 }
 
-function listOptions() {
+function listOptions(): RepositoryListOptions {
   return {
     isActive: (entry) => repositoryEntryIsActive(entry, activeRepository()),
     canRemove:
@@ -351,7 +515,7 @@ function listOptions() {
   };
 }
 
-export const repositories = {
+export const repositories: RepositoriesService = {
   get configured() {
     return Boolean(dependencies);
   },
@@ -520,11 +684,13 @@ export const repositories = {
 
     busy = true;
     let removed = 0;
-    let failure = null;
+    let failure: string | null = null;
     try {
       for (const entry of removable) {
         try {
-          const returned = await dependencies.removeRecentRepository?.(entry.path);
+          const returned = await dependencies.removeRecentRepository?.(
+            entry.path
+          );
           applyRemovalResult(entry.path, returned);
           removed += 1;
         } catch (error) {

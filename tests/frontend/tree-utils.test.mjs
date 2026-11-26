@@ -12,7 +12,7 @@ import {
   formatBytes,
   isPathWithin,
   parentOf,
-} from "../../src/tree-utils.js";
+} from "../../src/tree-utils.ts";
 
 const tree = [
   {

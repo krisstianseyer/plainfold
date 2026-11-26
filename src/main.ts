@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 
-import { api } from "./api.js";
+import { api } from "./api.ts";
 import {
   DEFAULT_COLOR_SETTINGS,
   appendColorMenu,
@@ -14,8 +14,9 @@ import {
   decorateTreeEntry,
   normalizeColorSettings,
   renderColorSettings,
-} from "./colors.js";
-import { createEditor } from "./editor.js";
+} from "./colors.ts";
+import { createEditor } from "./editor.ts";
+import type { EditorHandle } from "./editor.ts";
 import {
   FEATURE_CATEGORIES,
   FEATURE_CATEGORY_ORDER,
@@ -23,7 +24,8 @@ import {
   controlsForGroup,
   featureEnabled,
   groupOf,
-} from "./features.js";
+} from "./features.ts";
+import type { FeatureControl } from "./features.ts";
 import {
   configureRepositories,
   limitRepositoryEntries,
@@ -32,7 +34,7 @@ import {
   repositories,
   repositoryEntryIsActive,
   repositoryLastAfterRemoval,
-} from "./repositories.js";
+} from "./repositories.ts";
 import {
   UPDATE_OWNER,
   UPDATE_REPO,
@@ -46,7 +48,7 @@ import {
   updateInactiveStatus,
   updateSourceConfigured,
   updateSourceLabel,
-} from "./updater.js";
+} from "./updater.ts";
 import {
   basename,
   contentChangedSince,
@@ -60,167 +62,186 @@ import {
   formatDate,
   isPathWithin,
   parentOf,
-} from "./tree-utils.js";
+} from "./tree-utils.ts";
+import type {
+  DesktopShortcutStatus,
+  Eol,
+  FileRead,
+  RepositoryEntry,
+  RepositoryInfo,
+  SearchHit,
+  Settings,
+  Snapshot,
+  TagCount,
+  TreeNode,
+  UndoState,
+} from "./types.ts";
 
-const $ = (id) => document.getElementById(id);
+/**
+ * Element lookup. The ids are fixed by index.html: a trailing `!` marks the
+ * elements the existing code already assumes are present, while unmarked
+ * entries stay nullable because their call sites guard them with `?.`.
+ */
+const $ = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
+  document.getElementById(id) as T | null;
 
 const els = {
-  sidebarToggle: $("sidebar-toggle"),
-  sidebarOpenRepository: $("sidebar-open-repository"),
-  sidebarAddRepository: $("sidebar-add-repository"),
-  sidebarMore: $("sidebar-more"),
-  menuApplication: $("menu-application"),
-  applicationMenu: $("application-menu"),
-  menuEdit: $("menu-edit"),
-  editMenu: $("edit-menu"),
-  menuOpenRepository: $("menu-open-repository"),
-  menuSave: $("menu-save"),
-  menuCloseFile: $("menu-close-file"),
-  menuSettings: $("menu-settings"),
-  menuQuit: $("menu-quit"),
-  menuWrap: $("menu-wrap"),
-  emptyOpen: $("empty-open"),
-  emptySecondary: $("empty-secondary"),
-  emptyState: $("empty-state"),
-  emptyTitle: document.querySelector("#empty-state h1"),
-  emptyCopy: document.querySelector("#empty-state p"),
-  search: $("search"),
-  sidebarSearchSlot: $("sidebar-search-slot"),
-  contentSearchSlot: $("content-search-slot"),
-  pinnedList: $("pinned-list"),
-  recentList: $("recent-list"),
-  repositoryList: $("repository-list"),
-  welcomeRepositories: $("welcome-repositories"),
+  sidebarToggle: $<HTMLButtonElement>("sidebar-toggle"),
+  sidebarOpenRepository: $<HTMLButtonElement>("sidebar-open-repository"),
+  sidebarAddRepository: $<HTMLButtonElement>("sidebar-add-repository"),
+  sidebarMore: $<HTMLButtonElement>("sidebar-more"),
+  menuApplication: $<HTMLButtonElement>("menu-application")!,
+  applicationMenu: $("application-menu")!,
+  menuEdit: $<HTMLButtonElement>("menu-edit")!,
+  editMenu: $("edit-menu")!,
+  menuOpenRepository: $<HTMLButtonElement>("menu-open-repository"),
+  menuSave: $<HTMLButtonElement>("menu-save"),
+  menuCloseFile: $<HTMLButtonElement>("menu-close-file"),
+  menuSettings: $<HTMLButtonElement>("menu-settings"),
+  menuQuit: $<HTMLButtonElement>("menu-quit"),
+  menuWrap: $<HTMLButtonElement>("menu-wrap"),
+  emptyOpen: $<HTMLButtonElement>("empty-open")!,
+  emptySecondary: $<HTMLButtonElement>("empty-secondary"),
+  emptyState: $("empty-state")!,
+  emptyTitle: document.querySelector<HTMLElement>("#empty-state h1")!,
+  emptyCopy: document.querySelector<HTMLElement>("#empty-state p")!,
+  search: $<HTMLInputElement>("search")!,
+  sidebarSearchSlot: $("sidebar-search-slot")!,
+  contentSearchSlot: $("content-search-slot")!,
+  pinnedList: $("pinned-list")!,
+  recentList: $("recent-list")!,
+  repositoryList: $("repository-list")!,
+  welcomeRepositories: $("welcome-repositories")!,
   updateBanner: $("update-banner"),
-  updateBannerText: $("update-banner-text"),
-  updateBannerNotes: $("update-banner-notes"),
-  updateBannerDismiss: $("update-banner-dismiss"),
-  tree: $("tree"),
-  treeFilter: $("tree-filter"),
-  treeEmpty: $("tree-empty"),
-  rootDropZone: $("root-drop-zone"),
-  tagFilter: $("tag-filter"),
-  sortAlpha: $("sort-alpha"),
-  newFile: $("new-file"),
-  newFolder: $("new-folder"),
-  repositoryLabel: $("repository-label"),
-  windowMinimize: $("window-minimize"),
-  windowMaximize: $("window-maximize"),
-  windowClose: $("window-close"),
-  statusMessage: $("status-message"),
-  layout: document.querySelector(".layout"),
-  paneResizer: $("pane-resizer"),
-  workspace: document.querySelector(".workspace"),
-  sidebar: document.querySelector(".sidebar"),
-  editorPane: $("editor-pane"),
-  fileName: $("file-name"),
-  fileGlyph: $("file-glyph"),
-  filePathTip: $("file-path-tip"),
-  fileTags: $("file-tags"),
-  wrapToggle: $("wrap-toggle"),
-  saveButton: $("save-button"),
-  closeFile: $("close-file"),
-  repoLoading: $("repo-loading"),
-  repoLoadingTitle: $("repo-loading-title"),
-  repoLoadingCopy: $("repo-loading-copy"),
-  editor: $("editor"),
-  notice: $("notice"),
-  noticeText: $("notice-text"),
-  noticeClose: $("notice-close"),
-  appVersion: $("app-version"),
+  updateBannerText: $("update-banner-text")!,
+  updateBannerNotes: $<HTMLButtonElement>("update-banner-notes"),
+  updateBannerDismiss: $<HTMLButtonElement>("update-banner-dismiss"),
+  tree: $("tree")!,
+  treeFilter: $<HTMLInputElement>("tree-filter")!,
+  treeEmpty: $("tree-empty")!,
+  rootDropZone: $("root-drop-zone")!,
+  tagFilter: $("tag-filter")!,
+  sortAlpha: $<HTMLButtonElement>("sort-alpha")!,
+  newFile: $<HTMLButtonElement>("new-file")!,
+  newFolder: $<HTMLButtonElement>("new-folder")!,
+  repositoryLabel: $("repository-label")!,
+  windowMinimize: $<HTMLButtonElement>("window-minimize"),
+  windowMaximize: $<HTMLButtonElement>("window-maximize"),
+  windowClose: $<HTMLButtonElement>("window-close"),
+  statusMessage: $("status-message")!,
+  layout: document.querySelector<HTMLElement>(".layout")!,
+  paneResizer: $("pane-resizer")!,
+  workspace: document.querySelector<HTMLElement>(".workspace"),
+  sidebar: document.querySelector<HTMLElement>(".sidebar")!,
+  editorPane: $("editor-pane")!,
+  fileName: $("file-name")!,
+  fileGlyph: $("file-glyph")!,
+  filePathTip: $("file-path-tip")!,
+  fileTags: $("file-tags")!,
+  wrapToggle: $<HTMLButtonElement>("wrap-toggle")!,
+  saveButton: $<HTMLButtonElement>("save-button")!,
+  closeFile: $<HTMLButtonElement>("close-file")!,
+  repoLoading: $("repo-loading")!,
+  repoLoadingTitle: $("repo-loading-title")!,
+  repoLoadingCopy: $("repo-loading-copy")!,
+  editor: $("editor")!,
+  notice: $("notice")!,
+  noticeText: $("notice-text")!,
+  noticeClose: $<HTMLButtonElement>("notice-close")!,
+  appVersion: $("app-version")!,
   repoLink: $("repo-link"),
-  supportLink: $("support-link"),
+  supportLink: $<HTMLButtonElement>("support-link"),
   toast: $("toast"),
-  statusLeft: $("status-left"),
-  statusRight: $("status-right"),
-  settingLayoutMenuTitlebar: $("setting-layout-menu-titlebar"),
-  settingLayoutStatusbar: $("setting-layout-statusbar"),
-  settingLayoutFileActions: $("setting-layout-file-actions"),
-  settingLayoutPreset: $("setting-layout-preset"),
-  searchResults: $("search-results"),
-  resultsList: $("results-list"),
-  resultsEmpty: $("results-empty"),
-  closeResults: $("close-results"),
-  contextMenu: $("context-menu"),
-  limitDialog: $("limit-dialog"),
-  limitForm: $("limit-form"),
-  limitTitle: $("limit-title"),
-  limitCopy: $("limit-copy"),
-  limitInput: $("limit-input"),
-  limitError: $("limit-error"),
-  limitSubmit: $("limit-submit"),
-  limitCancel: $("limit-cancel"),
-  promptDialog: $("prompt-dialog"),
-  promptForm: $("prompt-form"),
-  promptTitle: $("prompt-title"),
-  promptCopy: $("prompt-copy"),
-  promptLabel: $("prompt-label"),
-  promptInput: $("prompt-input"),
-  promptError: $("prompt-error"),
-  promptSubmit: $("prompt-submit"),
-  promptCancel: $("prompt-cancel"),
-  tagsDialog: $("tags-dialog"),
-  tagsForm: $("tags-form"),
-  tagsInput: $("tags-input"),
-  tagsError: $("tags-error"),
-  tagsCancel: $("tags-cancel"),
-  unsavedDialog: $("unsaved-dialog"),
-  unsavedCopy: $("unsaved-copy"),
-  unsavedSave: $("unsaved-save"),
-  revisionsDialog: $("revisions-dialog"),
-  revisionsCopy: $("revisions-copy"),
-  revisionsList: $("revisions-list"),
-  revisionsEmpty: $("revisions-empty"),
-  revisionsClose: $("revisions-close"),
-  propertiesDialog: $("properties-dialog"),
-  propertiesList: $("properties-list"),
-  settingsDialog: $("settings-dialog"),
-  settingsSearch: $("settings-search"),
-  settingsClose: $("settings-close"),
-  settingsSaved: $("settings-saved"),
+  statusLeft: $("status-left")!,
+  statusRight: $("status-right")!,
+  settingLayoutMenuTitlebar: $<HTMLInputElement>("setting-layout-menu-titlebar"),
+  settingLayoutStatusbar: $<HTMLInputElement>("setting-layout-statusbar"),
+  settingLayoutFileActions: $<HTMLInputElement>("setting-layout-file-actions"),
+  settingLayoutPreset: $<HTMLButtonElement>("setting-layout-preset"),
+  searchResults: $("search-results")!,
+  resultsList: $("results-list")!,
+  resultsEmpty: $("results-empty")!,
+  closeResults: $<HTMLButtonElement>("close-results")!,
+  contextMenu: $("context-menu")!,
+  limitDialog: $<HTMLDialogElement>("limit-dialog")!,
+  limitForm: $<HTMLFormElement>("limit-form")!,
+  limitTitle: $("limit-title")!,
+  limitCopy: $("limit-copy")!,
+  limitInput: $<HTMLInputElement>("limit-input")!,
+  limitError: $("limit-error")!,
+  limitSubmit: $("limit-submit")!,
+  limitCancel: $<HTMLButtonElement>("limit-cancel")!,
+  promptDialog: $<HTMLDialogElement>("prompt-dialog")!,
+  promptForm: $<HTMLFormElement>("prompt-form")!,
+  promptTitle: $("prompt-title")!,
+  promptCopy: $("prompt-copy")!,
+  promptLabel: $("prompt-label")!,
+  promptInput: $<HTMLInputElement>("prompt-input")!,
+  promptError: $("prompt-error")!,
+  promptSubmit: $("prompt-submit")!,
+  promptCancel: $<HTMLButtonElement>("prompt-cancel")!,
+  tagsDialog: $<HTMLDialogElement>("tags-dialog")!,
+  tagsForm: $<HTMLFormElement>("tags-form")!,
+  tagsInput: $<HTMLInputElement>("tags-input")!,
+  tagsError: $("tags-error")!,
+  tagsCancel: $<HTMLButtonElement>("tags-cancel")!,
+  unsavedDialog: $<HTMLDialogElement>("unsaved-dialog")!,
+  unsavedCopy: $("unsaved-copy")!,
+  unsavedSave: $<HTMLButtonElement>("unsaved-save")!,
+  revisionsDialog: $<HTMLDialogElement>("revisions-dialog")!,
+  revisionsCopy: $("revisions-copy")!,
+  revisionsList: $("revisions-list")!,
+  revisionsEmpty: $("revisions-empty")!,
+  revisionsClose: $<HTMLButtonElement>("revisions-close")!,
+  propertiesDialog: $<HTMLDialogElement>("properties-dialog")!,
+  propertiesList: $("properties-list")!,
+  settingsDialog: $<HTMLDialogElement>("settings-dialog")!,
+  settingsSearch: $<HTMLInputElement>("settings-search")!,
+  settingsClose: $<HTMLButtonElement>("settings-close")!,
+  settingsSaved: $("settings-saved")!,
   settingsNoMatch: $("settings-no-match"),
-  settingTheme: $("setting-theme"),
-  settingAccent: $("setting-accent"),
-  settingContentBackground: $("setting-content-background"),
-  settingFontFamily: $("setting-font-family"),
-  settingFontSize: $("setting-font-size"),
-  settingTabWidth: $("setting-tab-width"),
-  settingPinnedLimit: $("setting-pinned-limit"),
-  settingRecentLimit: $("setting-recent-limit"),
-  pinnedTitle: $("pinned-title"),
-  recentTitle: $("recent-title"),
-  settingAutosaveEnabled: $("setting-autosave-enabled"),
-  settingAutosaveIdle: $("setting-autosave-idle"),
-  settingAutosaveUnit: $("setting-autosave-unit"),
-  settingRevisionHourly: $("setting-revision-hourly"),
-  settingRevisionDaily: $("setting-revision-daily"),
-  settingRevisionWeekly: $("setting-revision-weekly"),
-  settingRevisionMonthly: $("setting-revision-monthly"),
-  settingRevisionYearly: $("setting-revision-yearly"),
-  settingSort: $("setting-sort"),
-  settingDefaultRepository: $("setting-default-repository"),
-  settingRecentRepositoryLimit: $("setting-recent-repository-limit"),
-  chooseDefaultRepository: $("choose-default-repository"),
-  useCurrentRepository: $("use-current-repository"),
-  clearDefaultRepository: $("clear-default-repository"),
-  settingsRepositoriesList: $("settings-repositories-list"),
+  settingTheme: $<HTMLSelectElement>("setting-theme"),
+  settingAccent: $<HTMLSelectElement>("setting-accent"),
+  settingContentBackground: $<HTMLSelectElement>("setting-content-background"),
+  settingFontFamily: $<HTMLInputElement>("setting-font-family"),
+  settingFontSize: $<HTMLInputElement>("setting-font-size"),
+  settingTabWidth: $<HTMLInputElement>("setting-tab-width"),
+  settingPinnedLimit: $<HTMLInputElement>("setting-pinned-limit"),
+  settingRecentLimit: $<HTMLInputElement>("setting-recent-limit"),
+  pinnedTitle: $("pinned-title")!,
+  recentTitle: $("recent-title")!,
+  settingAutosaveEnabled: $<HTMLInputElement>("setting-autosave-enabled"),
+  settingAutosaveIdle: $<HTMLInputElement>("setting-autosave-idle"),
+  settingAutosaveUnit: $<HTMLSelectElement>("setting-autosave-unit"),
+  settingRevisionHourly: $<HTMLInputElement>("setting-revision-hourly"),
+  settingRevisionDaily: $<HTMLInputElement>("setting-revision-daily"),
+  settingRevisionWeekly: $<HTMLInputElement>("setting-revision-weekly"),
+  settingRevisionMonthly: $<HTMLInputElement>("setting-revision-monthly"),
+  settingRevisionYearly: $<HTMLInputElement>("setting-revision-yearly"),
+  settingSort: $<HTMLSelectElement>("setting-sort"),
+  settingDefaultRepository: $<HTMLInputElement>("setting-default-repository")!,
+  settingRecentRepositoryLimit: $<HTMLInputElement>("setting-recent-repository-limit"),
+  chooseDefaultRepository: $<HTMLButtonElement>("choose-default-repository")!,
+  useCurrentRepository: $<HTMLButtonElement>("use-current-repository")!,
+  clearDefaultRepository: $<HTMLButtonElement>("clear-default-repository")!,
+  settingsRepositoriesList: $("settings-repositories-list")!,
   settingUpdateStatus: $("setting-update-status"),
   settingUpdateSource: $("setting-update-source"),
   settingUpdateVersions: $("setting-update-versions"),
   settingUpdateLastChecked: $("setting-update-last-checked"),
-  settingUpdateCheck: $("setting-update-check"),
+  settingUpdateCheck: $<HTMLButtonElement>("setting-update-check"),
   settingsUpdateAutocheck: $("settings-update-autocheck"),
   settingsFeatures: $("settings-features"),
   settingsSearchInfo: $("settings-search-info"),
   settingsSearchFeatureState: $("settings-search-feature-state"),
-  searchRescan: $("search-rescan"),
-  maintenanceRescan: $("maintenance-rescan"),
-  maintenanceClearRecents: $("maintenance-clear-recents"),
-  maintenanceResetAll: $("maintenance-reset-all"),
+  searchRescan: $<HTMLButtonElement>("search-rescan"),
+  maintenanceRescan: $<HTMLButtonElement>("maintenance-rescan"),
+  maintenanceClearRecents: $<HTMLButtonElement>("maintenance-clear-recents"),
+  maintenanceResetAll: $<HTMLButtonElement>("maintenance-reset-all"),
   settingsAboutVersion: $("settings-about-version"),
   settingsAboutSource: $("settings-about-source"),
   settingsAboutGithub: $("settings-about-github"),
-  settingsAboutSupport: $("settings-about-support"),
+  settingsAboutSupport: $<HTMLButtonElement>("settings-about-support"),
   settingsError: $("settings-error"),
 };
 
@@ -234,7 +255,7 @@ const WRAP_STORAGE_KEY = "plainfold.wrap";
 const ZOOM_MIN = 8;
 const ZOOM_MAX = 48;
 
-const ACCENT_AREAS = [
+const ACCENT_AREAS: string[] = [
   "titlebar",
   "fileHeader",
   "statusbar",
@@ -243,7 +264,7 @@ const ACCENT_AREAS = [
   "editor",
 ];
 
-const ACCENT_AREA_ATTRIBUTES = {
+const ACCENT_AREA_ATTRIBUTES: Record<string, string> = {
   titlebar: "accentTitlebar",
   fileHeader: "accentFileheader",
   statusbar: "accentStatusbar",
@@ -252,7 +273,7 @@ const ACCENT_AREA_ATTRIBUTES = {
   editor: "accentEditor",
 };
 
-const CONTENT_BACKGROUNDS = new Set([
+const CONTENT_BACKGROUNDS = new Set<string>([
   "theme",
   "white",
   "paper",
@@ -261,7 +282,122 @@ const CONTENT_BACKGROUNDS = new Set([
   "black",
 ]);
 
-const DEFAULT_SETTINGS = {
+/** The subset of `FileRead` kept while a file is mounted in the editor. */
+interface OpenFile {
+  path: string;
+  name: string;
+  encoding: string;
+  encodingLabel: string;
+  eol: Eol;
+  eolLabel: string;
+  readOnly: boolean;
+  size: number;
+  modifiedMs: number;
+}
+
+/** Fields of the update banner and Settings > Updates status line. */
+interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string | null;
+  lastChecked: number | null;
+  checking: boolean;
+  releaseUrl: string | null;
+  status: string;
+}
+
+/** A tree row being dragged, captured at dragstart. */
+interface DragSource {
+  path: string;
+  parent: string;
+  name: string;
+}
+
+/** One of the application menu trigger/panel pairs. */
+interface AppMenuRoot {
+  trigger: HTMLButtonElement;
+  panel: HTMLElement;
+}
+
+/** Context accepted by the small section/repository color menu. */
+interface ColorMenuContext {
+  path?: string;
+  isDir?: boolean;
+  section?: string;
+  repositoryPath?: string;
+  repositoryName?: string;
+}
+
+/** Fields filled into the reusable name prompt. */
+interface PromptNameOptions {
+  title: string;
+  copy: string;
+  label: string;
+  submit: string;
+  initial: string;
+  error: string;
+}
+
+/** Everything the UI controller keeps between events. */
+interface UiState {
+  settings: Settings;
+  savedSettings: Settings;
+  recentRepositoryEntries: RepositoryEntry[];
+  repository: RepositoryInfo | null;
+  tree: TreeNode[];
+  expanded: Set<string>;
+  filterCollapsed: Set<string>;
+  selected: string | null;
+  currentFile: OpenFile | null;
+  editor: EditorHandle | null;
+  dirty: boolean;
+  wrap: boolean;
+  tags: Map<string, string[]>;
+  tagCounts: TagCount[];
+  pins: string[];
+  recents: string[];
+  tagFilter: string | null;
+  fileFilter: string;
+  homeFilter: string;
+  sidebarCollapsed: boolean;
+  searchTimer: ReturnType<typeof setTimeout> | null;
+  searchSequence: number;
+  dragSource: DragSource | null;
+  settingsDraftRepository: string | null;
+  theme: string;
+  saving: boolean;
+  moving: boolean;
+  autosaveTimer: ReturnType<typeof setTimeout> | null;
+  autosavePaused: boolean;
+  sidebarWidth: number;
+  menuReturnFocus: Element | null;
+  openMenu: AppMenuRoot | null;
+  menuWasEditorFocused: boolean;
+  menuFocusCaptured: boolean;
+  pendingTreeFocus: string | null;
+  // Only set by tree focus events; undefined keeps the initial selection.
+  focusPath?: string;
+  diskContent: string | null;
+  statusTimer: ReturnType<typeof setTimeout> | null;
+  undoInfo: UndoState;
+  undoBusy: boolean;
+  version: string;
+  settingsDraftFeatures: Set<string>;
+  settingsSaveTimer: ReturnType<typeof setTimeout> | null;
+  settingsSaveChain: Promise<unknown>;
+  settingsDirty: boolean;
+  settingsRevision: number;
+  editorZoomTimer: ReturnType<typeof setTimeout> | null;
+  settingsSaveFailed: boolean;
+  settingsClosing: boolean;
+  settingsSection: string;
+  settingsQuery: string;
+  expandedFeatureGroups: Set<string>;
+  savedIndicatorTimer: ReturnType<typeof setTimeout> | null;
+  searchIndexMessage: string;
+  updateInfo: UpdateInfo;
+}
+
+const DEFAULT_SETTINGS: Settings = {
   theme: "white",
   accent: "slate",
   contentBackground: "theme",
@@ -293,7 +429,7 @@ const DEFAULT_SETTINGS = {
   colorOverrides: {},
 };
 
-const state = {
+const state: UiState = {
   settings: { ...DEFAULT_SETTINGS },
   // Last settings known to be written to disk, used by small popups that save
   // one value without going through the Settings dialog.
@@ -375,7 +511,7 @@ media.addEventListener("change", () => {
  * True when a feature group or advanced control is enabled. Unknown ids and
  * missing settings are treated as enabled.
  */
-function featureOn(id) {
+function featureOn(id: string): boolean {
   return featureEnabled(id, state.settings.disabledFeatures);
 }
 
@@ -385,9 +521,9 @@ function featureOn(id) {
  * Data stored by disabled features (tags, pins, recents, revisions) is left
  * untouched.
  */
-function applyFeatureVisibility() {
+function applyFeatureVisibility(): void {
   const disabled = state.settings.disabledFeatures;
-  for (const element of document.querySelectorAll("[data-feature]")) {
+  for (const element of document.querySelectorAll<HTMLElement>("[data-feature]")) {
     const ids = String(element.dataset.feature ?? "")
       .trim()
       .split(/\s+/)
@@ -433,28 +569,33 @@ function applyFeatureVisibility() {
       const fallback = panels.find(
         (panel) => !panel.classList.contains("feature-off")
       );
-      if (fallback) activateSettingsSection(fallback.dataset.settingsPanel);
+      if (fallback) {
+        activateSettingsSection(fallback.dataset.settingsPanel ?? "");
+      }
     }
     updateSettingsPanelVisibility();
     applySettingsSearch();
   }
 }
 
-function errText(error) {
+function errText(error: unknown): string {
   if (typeof error === "string") return error;
-  if (error && typeof error.message === "string") return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
   return "The operation could not be completed.";
 }
 
 /** Errors appear in a bottom-right toast, then clear. */
-function setStatus(text) {
+function setStatus(text: string | null | undefined): void {
   els.statusMessage.textContent = text ?? "";
   els.statusMessage.hidden = !text;
   if (els.toast) {
     els.toast.textContent = text ?? "";
     els.toast.hidden = !text;
   }
-  clearTimeout(state.statusTimer);
+  clearTimeout(state.statusTimer ?? undefined);
   state.statusTimer = setTimeout(() => {
     els.statusMessage.hidden = true;
     if (els.toast) els.toast.hidden = true;
@@ -469,7 +610,7 @@ function setStatus(text) {
 let repositoryLoadingShownAt = 0;
 let repositoryLoadingTimer = 0;
 
-function showRepositoryLoading(label, copy = "") {
+function showRepositoryLoading(label: string, copy: string = ""): void {
   clearTimeout(repositoryLoadingTimer);
   repositoryLoadingTimer = 0;
   els.repoLoadingTitle.textContent = label;
@@ -481,12 +622,12 @@ function showRepositoryLoading(label, copy = "") {
 }
 
 /** Delay the overlay briefly so quick launches do not flash it. */
-function scheduleRepositoryLoading(label, copy = "") {
+function scheduleRepositoryLoading(label: string, copy: string = ""): void {
   clearTimeout(repositoryLoadingTimer);
   repositoryLoadingTimer = setTimeout(() => showRepositoryLoading(label, copy), 150);
 }
 
-async function hideRepositoryLoading() {
+async function hideRepositoryLoading(): Promise<void> {
   clearTimeout(repositoryLoadingTimer);
   repositoryLoadingTimer = 0;
   if (els.repoLoading.hidden) return;
@@ -501,12 +642,14 @@ async function hideRepositoryLoading() {
   repositoryLoadingShownAt = 0;
 }
 
-function nextFrame() {
-  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+function nextFrame(): Promise<void> {
+  return new Promise<void>((resolve) =>
+    requestAnimationFrame(() => setTimeout(resolve, 0))
+  );
 }
 
 /** Folders and files in the whole repository, shown on the Repository heading. */
-function updateStatusLeft() {
+function updateStatusLeft(): void {
   if (!featureOn("repositoryCounts") || !featureOn("repositoryCounts.statusCounts")) {
     els.statusLeft.textContent = "";
     if (els.repositoryLabel) els.repositoryLabel.title = "";
@@ -527,7 +670,7 @@ function updateStatusLeft() {
 }
 
 /** Tree and header glyph families, keyed by lower-case extension. */
-const FILE_KIND_BY_EXTENSION = {
+const FILE_KIND_BY_EXTENSION: Record<string, string> = {
   md: "markdown",
   markdown: "markdown",
   mdx: "markdown",
@@ -605,7 +748,7 @@ const FILE_KIND_BY_EXTENSION = {
   rtf: "document",
 };
 
-function fileKind(path) {
+function fileKind(path: string): string {
   const name = basename(path).toLowerCase();
   const dot = name.lastIndexOf(".");
   const extension = dot > 0 ? name.slice(dot + 1) : "";
@@ -616,14 +759,17 @@ function fileKind(path) {
 }
 
 /** Point a glyph at the icon for this path, or clear it when no file is open. */
-function setFileGlyph(element, path) {
+function setFileGlyph(element: HTMLElement | null, path: string | null): void {
   if (!element) return;
   if (path) element.dataset.kind = fileKind(path);
   else delete element.dataset.kind;
 }
 
 /** Words, characters, and size of the open file, shown in the filename tooltip. */
-function updateFileStats(content, size) {
+function updateFileStats(
+  content: string,
+  size: number | null | undefined
+): void {
   if (!featureOn("editorStats") || !featureOn("editorStats.statusWords")) {
     els.statusRight.textContent = "";
     els.fileName.title = state.currentFile?.path ?? "";
@@ -634,7 +780,7 @@ function updateFileStats(content, size) {
   els.fileName.title = text;
 }
 
-function countWords(text) {
+function countWords(text: string): number {
   // Same rule as the word count most editors use: runs of non-whitespace.
   let count = 0;
   const re = /\S+/g;
@@ -642,11 +788,14 @@ function countWords(text) {
   return count;
 }
 
-function formatCount(value) {
+function formatCount(value: number): string {
   return value.toLocaleString();
 }
 
-function statsText(content, size) {
+function statsText(
+  content: string,
+  size: number | null | undefined
+): string {
   const file = state.currentFile;
   if (!file) return "";
   const text = content ?? "";
@@ -659,7 +808,10 @@ function statsText(content, size) {
   ].join(" · ");
 }
 
-function setNotice(text, kind = "info") {
+function setNotice(
+  text: string | null | undefined,
+  kind: string = "info"
+): void {
   if (!text) {
     els.notice.hidden = true;
     els.noticeText.textContent = "";
@@ -671,13 +823,13 @@ function setNotice(text, kind = "info") {
 }
 
 /** Dismiss whatever message is showing without changing anything else. */
-function dismissNotice() {
+function dismissNotice(): boolean {
   if (els.notice.hidden) return false;
   setNotice("");
   return true;
 }
 
-function updateTitle() {
+function updateTitle(): void {
   if (state.currentFile) {
     const marker = state.dirty ? "• " : "";
     document.title = `${state.currentFile.name} — Plainfold`;
@@ -686,7 +838,7 @@ function updateTitle() {
   }
 }
 
-function fontValue(raw) {
+function fontValue(raw: string | null | undefined): string {
   const value = (raw ?? "").trim() || "Consolas";
   if (value.includes(",") || value.startsWith('"') || value.startsWith("'")) {
     return value;
@@ -695,7 +847,7 @@ function fontValue(raw) {
 }
 
 /** Every theme the settings list offers. Only `system` follows the OS. */
-const THEMES = new Set([
+const THEMES = new Set<string>([
   "light",
   "white",
   "dark",
@@ -707,9 +859,15 @@ const THEMES = new Set([
   "forest",
 ]);
 
-const DARK_THEMES = new Set(["dark", "nord", "solarized-dark", "midnight", "forest"]);
+const DARK_THEMES = new Set<string>([
+  "dark",
+  "nord",
+  "solarized-dark",
+  "midnight",
+  "forest",
+]);
 
-const ACCENTS = new Set([
+const ACCENTS = new Set<string>([
   "theme",
   "blue",
   "teal",
@@ -721,41 +879,41 @@ const ACCENTS = new Set([
   "slate",
 ]);
 
-function themeName() {
+function themeName(): string {
   const setting = state.settings.theme ?? "system";
   if (setting === "system") return media.matches ? "dark" : "light";
   return THEMES.has(setting) ? setting : media.matches ? "dark" : "light";
 }
 
-function accentName() {
+function accentName(): string {
   const setting = state.settings.accent ?? "theme";
   return ACCENTS.has(setting) ? setting : "theme";
 }
 
-function normalizeAccentAreas(value) {
+function normalizeAccentAreas(value: unknown): string[] {
   const selected = new Set(
     Array.isArray(value) ? value : DEFAULT_SETTINGS.accentAreas
   );
   return ACCENT_AREAS.filter((area) => selected.has(area));
 }
 
-function contentBackgroundName() {
+function contentBackgroundName(): string {
   const setting = state.settings.contentBackground ?? "theme";
   return CONTENT_BACKGROUNDS.has(setting) ? setting : "theme";
 }
 
-function contentBackgroundIsDark() {
+function contentBackgroundIsDark(): boolean {
   const background = contentBackgroundName();
   if (background === "theme") return DARK_THEMES.has(themeName());
   return background === "dark" || background === "black";
 }
 
-function editorThemeName() {
+function editorThemeName(): string {
   if (contentBackgroundName() === "theme") return state.theme;
   return contentBackgroundIsDark() ? "dark" : "content-light";
 }
 
-function applyTheme() {
+function applyTheme(): void {
   const theme = themeName();
   const contentDark = contentBackgroundIsDark();
   const areas = new Set(normalizeAccentAreas(state.settings.accentAreas));
@@ -780,7 +938,7 @@ function applyTheme() {
 }
 
 /** Desktop chrome can be dialed back to the menu-first layout. */
-function applyLayout() {
+function applyLayout(): void {
   const menuTitlebar = state.settings.layoutMenuTitlebar !== false;
   const statusbar = Boolean(state.settings.layoutStatusbar);
   const fileActions = Boolean(state.settings.layoutFileActions);
@@ -790,18 +948,18 @@ function applyLayout() {
   if (!menuTitlebar) closeMenus();
 }
 
-function clampZoom(value) {
+function clampZoom(value: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value)));
 }
 
 /** The size the editor uses, from the font size in Settings. */
-function editorFontSize() {
+function editorFontSize(): number {
   return clampZoom(Number(state.settings.fontSize) || 14);
 }
 
 /** Ctrl+wheel is the webview's own window zoom, so nothing here reacts to
  *  the wheel; this only keeps the editor text at the Settings size. */
-function applyEditorSize() {
+function applyEditorSize(): void {
   document.documentElement.style.setProperty(
     "--editor-size",
     `${editorFontSize()}px`
@@ -812,7 +970,7 @@ function applyEditorSize() {
  * Editor zoom is its own axis: it only changes the text size in the editor
  * pane, so the window chrome keeps whatever UI zoom the webview has.
  */
-function setEditorZoom(nextSize) {
+function setEditorZoom(nextSize: number): void {
   const size = clampZoom(nextSize);
   if (size === editorFontSize()) return;
   state.settings.fontSize = size;
@@ -820,22 +978,27 @@ function setEditorZoom(nextSize) {
   if (els.settingFontSize) els.settingFontSize.value = String(size);
   state.settingsDirty = true;
   state.settingsRevision += 1;
-  clearTimeout(state.editorZoomTimer);
+  clearTimeout(state.editorZoomTimer ?? undefined);
   state.editorZoomTimer = setTimeout(() => {
     state.editorZoomTimer = null;
     saveSettingsNow();
   }, 350);
 }
 
-function handleEditorWheel(event) {
+function handleEditorWheel(event: WheelEvent): void {
   if (!(event.ctrlKey || event.metaKey)) return;
-  if (!state.currentFile || !els.editor?.contains(event.target)) return;
+  if (
+    !state.currentFile ||
+    !(event.target instanceof Node) ||
+    !els.editor?.contains(event.target)
+  )
+    return;
   event.preventDefault();
   event.stopPropagation();
   setEditorZoom(editorFontSize() + (event.deltaY < 0 ? 1 : -1));
 }
 
-function applySettings(next) {
+function applySettings(next: Settings | Partial<Settings>): void {
   state.settings = { ...DEFAULT_SETTINGS, ...next };
   state.settings.disabledFeatures = Array.isArray(state.settings.disabledFeatures)
     ? [...state.settings.disabledFeatures]
@@ -863,7 +1026,7 @@ function applySettings(next) {
   syncFeatureSwitches();
 }
 
-function readWrapSetting() {
+function readWrapSetting(): boolean {
   try {
     return localStorage.getItem(WRAP_STORAGE_KEY) !== "0";
   } catch {
@@ -871,7 +1034,7 @@ function readWrapSetting() {
   }
 }
 
-function writeWrapSetting(enabled) {
+function writeWrapSetting(enabled: boolean): void {
   try {
     localStorage.setItem(WRAP_STORAGE_KEY, enabled ? "1" : "0");
   } catch {
@@ -879,7 +1042,7 @@ function writeWrapSetting(enabled) {
   }
 }
 
-function loadSidebarWidth() {
+function loadSidebarWidth(): number {
   try {
     const value = Number(localStorage.getItem(SIDEBAR_STORAGE_KEY));
     if (Number.isFinite(value) && value >= SIDEBAR_MIN && value <= SIDEBAR_MAX) {
@@ -891,7 +1054,7 @@ function loadSidebarWidth() {
   return SIDEBAR_DEFAULT;
 }
 
-function applySidebarWidth(width) {
+function applySidebarWidth(width: number): number {
   const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
   state.sidebarWidth = next;
   els.layout.style.setProperty("--sidebar-width", `${next}px`);
@@ -899,7 +1062,7 @@ function applySidebarWidth(width) {
   return next;
 }
 
-function saveSidebarWidth() {
+function saveSidebarWidth(): void {
   try {
     localStorage.setItem(SIDEBAR_STORAGE_KEY, String(state.sidebarWidth));
   } catch {
@@ -907,7 +1070,7 @@ function saveSidebarWidth() {
   }
 }
 
-function applySidebarCollapsed(collapsed) {
+function applySidebarCollapsed(collapsed: boolean): void {
   state.sidebarCollapsed = Boolean(collapsed);
   document.documentElement.dataset.sidebarCollapsed = state.sidebarCollapsed ? "on" : "off";
   els.sidebarToggle?.setAttribute("aria-pressed", String(state.sidebarCollapsed));
@@ -922,7 +1085,7 @@ function applySidebarCollapsed(collapsed) {
   }
 }
 
-function updateControls() {
+function updateControls(): void {
   const hasRepository = Boolean(state.repository);
   const hasFile = Boolean(state.currentFile);
   els.search.disabled =
@@ -993,7 +1156,7 @@ function updateControls() {
   syncHomeFilterControls();
 }
 
-function homeEmptyCopy() {
+function homeEmptyCopy(): string {
   if (state.homeFilter === "pinned") {
     return "No pinned files yet. Pin a file to see it here.";
   }
@@ -1003,17 +1166,18 @@ function homeEmptyCopy() {
   return "Choose a file from the sidebar to begin editing.";
 }
 
-function placeSearchField(editing) {
+function placeSearchField(editing: boolean): void {
   const field = els.search?.closest(".sidebar-search");
   const target = editing ? els.sidebarSearchSlot : els.contentSearchSlot;
   if (!field || !target || field.parentElement === target) return;
   target.append(field);
 }
 
-function setEmptyAction(label, disabled, title) {
+function setEmptyAction(label: string, disabled: boolean, title: string): void {
   els.emptyOpen.disabled = disabled;
   els.emptyOpen.title = title;
-  els.emptyOpen.querySelector("span").textContent = label;
+  // The button's label span is fixed markup in index.html.
+  els.emptyOpen.querySelector("span")!.textContent = label;
   if (els.emptySecondary) {
     els.emptySecondary.textContent = label;
     els.emptySecondary.disabled = disabled;
@@ -1021,8 +1185,10 @@ function setEmptyAction(label, disabled, title) {
   }
 }
 
-function syncHomeFilterControls() {
-  for (const control of document.querySelectorAll("[data-home-filter]")) {
+function syncHomeFilterControls(): void {
+  for (const control of document.querySelectorAll<HTMLElement>(
+    "[data-home-filter]"
+  )) {
     const active = control.dataset.homeFilter === state.homeFilter;
     control.classList.toggle("is-active", active);
     if (control.classList.contains("content-tab")) {
@@ -1035,7 +1201,7 @@ function syncHomeFilterControls() {
   }
 }
 
-function setHomeFilter(filter) {
+function setHomeFilter(filter: string): void {
   if (!["all", "pinned", "recent"].includes(filter)) return;
   state.homeFilter = filter;
   if (state.repository) {
@@ -1046,7 +1212,7 @@ function setHomeFilter(filter) {
   }
 }
 
-function handleNotices(notices) {
+function handleNotices(notices: string[] | null | undefined): void {
   if (!notices?.length) return;
   setStatus(notices.join(" "));
   if (state.currentFile) setNotice(notices.join(" "), "info");
@@ -1056,7 +1222,7 @@ function handleNotices(notices) {
 /* Repository and tree                                                 */
 /* ------------------------------------------------------------------ */
 
-async function chooseRepository() {
+async function chooseRepository(): Promise<void> {
   try {
     if (!(await resolvePendingChanges())) return;
   } catch (error) {
@@ -1064,7 +1230,7 @@ async function chooseRepository() {
     setNotice(errText(error), "warn");
     return;
   }
-  let selected;
+  let selected: string | null;
   try {
     selected = await openDialog({
       directory: true,
@@ -1082,7 +1248,10 @@ async function chooseRepository() {
   await activateRepository(selected, { checkPending: false });
 }
 
-async function activateRepository(path, { checkPending = true } = {}) {
+async function activateRepository(
+  path: string,
+  { checkPending = true }: { checkPending?: boolean } = {}
+): Promise<boolean> {
   try {
     // Never let a repository change overtake an in-flight settings save.
     if (!(await flushSettingsSave())) {
@@ -1125,12 +1294,12 @@ async function activateRepository(path, { checkPending = true } = {}) {
 }
 
 /** Last path segment of a folder, for the loading popup title. */
-function repositoryName(path) {
+function repositoryName(path: string): string {
   const parts = String(path ?? "").split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? String(path ?? "");
 }
 
-function applySnapshot(snapshot) {
+function applySnapshot(snapshot: Snapshot): void {
   closeEditor({ silent: true });
   els.search.value = "";
   els.treeFilter.value = "";
@@ -1158,8 +1327,12 @@ function applySnapshot(snapshot) {
       state.settings.recentRepositories
     );
   }
-  if (snapshot.lastRepository !== undefined) {
-    state.settings.lastRepository = snapshot.lastRepository;
+  // Older backends include the last-opened repository outside `settings`.
+  const legacySnapshot = snapshot as Snapshot & {
+    lastRepository?: string | null;
+  };
+  if (legacySnapshot.lastRepository !== undefined) {
+    state.settings.lastRepository = legacySnapshot.lastRepository;
   }
   state.savedSettings = { ...state.settings };
   Object.assign(state.settings, normalizeColorSettings(state.settings));
@@ -1204,7 +1377,7 @@ function applySnapshot(snapshot) {
   updateTitle();
 }
 
-async function loadTree() {
+async function loadTree(): Promise<void> {
   if (!state.repository) {
     state.tree = [];
     renderTree();
@@ -1224,7 +1397,7 @@ async function loadTree() {
   refreshUndoState();
 }
 
-async function refreshOrganization() {
+async function refreshOrganization(): Promise<void> {
   if (!state.repository) {
     state.tags = new Map();
     state.tagCounts = [];
@@ -1255,7 +1428,7 @@ async function refreshOrganization() {
   }
 }
 
-function renderShortLists() {
+function renderShortLists(): void {
   const pinnedLimit = state.settings.pinnedLimit ?? 5;
   const recentLimit = state.settings.recentLimit ?? 5;
   els.pinnedTitle.title = `Pinned (showing up to ${pinnedLimit}) — click to change how many are shown`;
@@ -1273,7 +1446,7 @@ function renderShortLists() {
 /* Saved repositories                                                 */
 /* ------------------------------------------------------------------ */
 
-function recentRepositoryLimit() {
+function recentRepositoryLimit(): number {
   return Math.min(
     20,
     Math.max(1, Math.round(Number(state.settings.recentRepositoryLimit) || 8))
@@ -1281,7 +1454,7 @@ function recentRepositoryLimit() {
 }
 
 /** Rich entries ({ path, name, exists }) capped by the display limit. */
-function savedRepositoryEntries() {
+function savedRepositoryEntries(): RepositoryEntry[] {
   return limitRepositoryEntries(
     state.recentRepositoryEntries,
     recentRepositoryLimit()
@@ -1292,7 +1465,7 @@ function savedRepositoryEntries() {
  * Wire the saved-repositories service. The service never imports main.js;
  * every bit of state and every action is supplied as a callback here.
  */
-function configureRepositoryService() {
+function configureRepositoryService(): void {
   configureRepositories({
     getState: () => state,
     getEntries: () => state.recentRepositoryEntries,
@@ -1348,16 +1521,21 @@ function configureRepositoryService() {
 }
 
 /** Sidebar and welcome-screen repositories. */
-function renderRepositorySkeletons() {
+function renderRepositorySkeletons(): void {
   repositories.renderSidebar();
   repositories.renderWelcome();
 }
 
-function renderSettingsRepositories() {
+function renderSettingsRepositories(): void {
   repositories.renderSettingsList();
 }
 
-function renderShortList(element, paths, emptyText, source) {
+function renderShortList(
+  element: HTMLElement,
+  paths: string[],
+  emptyText: string,
+  source: string
+): void {
   element.textContent = "";
   if (!paths.length) {
     const li = document.createElement("li");
@@ -1395,16 +1573,17 @@ function renderShortList(element, paths, emptyText, source) {
   }
 }
 
-function renderTagFilter() {
+function renderTagFilter(): void {
   els.tagFilter.textContent = "";
   if (!state.tagCounts.length) {
     state.tagFilter = null;
     return;
   }
+  const activeTag = state.tagFilter;
   if (
-    state.tagFilter &&
+    activeTag &&
     !state.tagCounts.some(
-      (item) => item.tag.toLowerCase() === state.tagFilter.toLowerCase()
+      (item) => item.tag.toLowerCase() === activeTag.toLowerCase()
     )
   ) {
     state.tagFilter = null;
@@ -1438,7 +1617,7 @@ function renderTagFilter() {
   }
 }
 
-function treeForDisplay() {
+function treeForDisplay(): TreeNode[] {
   let display = state.tree;
   if (state.homeFilter === "pinned" || state.homeFilter === "recent") {
     const paths = state.homeFilter === "pinned" ? state.pins : state.recents;
@@ -1446,7 +1625,7 @@ function treeForDisplay() {
   }
   if (state.tagFilter) {
     const needle = state.tagFilter.toLowerCase();
-    const matching = new Set();
+    const matching = new Set<string>();
     for (const [path, tags] of state.tags) {
       if (tags.some((tag) => tag.toLowerCase() === needle)) matching.add(path);
     }
@@ -1458,10 +1637,12 @@ function treeForDisplay() {
   return display;
 }
 
-function renderTree() {
-  const activeEntry = els.tree.contains(document.activeElement)
-    ? document.activeElement.closest?.(".tree-entry")
-    : null;
+function renderTree(): void {
+  const activeElement = document.activeElement;
+  const activeEntry =
+    activeElement instanceof HTMLElement && els.tree.contains(activeElement)
+      ? activeElement.closest<HTMLElement>(".tree-entry")
+      : null;
   if (activeEntry?.dataset.path) {
     state.pendingTreeFocus = activeEntry.dataset.path;
   }
@@ -1484,7 +1665,7 @@ function renderTree() {
           : "This repository is empty.";
   const filtered = Boolean(state.tagFilter || state.fileFilter);
   renderNodes(display, 0, filtered);
-  const entries = [...els.tree.querySelectorAll(".tree-entry")];
+  const entries = [...els.tree.querySelectorAll<HTMLElement>(".tree-entry")];
   entries.forEach((entry) => {
     entry.tabIndex = -1;
   });
@@ -1502,12 +1683,12 @@ function renderTree() {
   }
 }
 
-function selectTreePath(path) {
+function selectTreePath(path: string): void {
   state.selected = path;
-  for (const row of els.tree.querySelectorAll(".tree-row")) {
+  for (const row of els.tree.querySelectorAll<HTMLElement>(".tree-row")) {
     row.classList.toggle("selected", row.dataset.path === path);
   }
-  for (const entry of els.tree.querySelectorAll(".tree-entry")) {
+  for (const entry of els.tree.querySelectorAll<HTMLElement>(".tree-entry")) {
     entry.setAttribute(
       "aria-selected",
       entry.dataset.path === path ? "true" : "false"
@@ -1515,16 +1696,20 @@ function selectTreePath(path) {
   }
 }
 
-function treeEntryList() {
-  return [...els.tree.querySelectorAll(".tree-entry")];
+function treeEntryList(): HTMLElement[] {
+  return [...els.tree.querySelectorAll<HTMLElement>(".tree-entry")];
 }
 
-function treeNodeExpanded(path, filtered) {
+function treeNodeExpanded(path: string, filtered: boolean): boolean {
   if (!filtered) return state.expanded.has(path);
   return !state.filterCollapsed.has(path);
 }
 
-function setTreeNodeExpanded(path, expanded, filtered) {
+function setTreeNodeExpanded(
+  path: string,
+  expanded: boolean,
+  filtered: boolean
+): void {
   if (!filtered) {
     if (expanded) state.expanded.add(path);
     else state.expanded.delete(path);
@@ -1534,15 +1719,17 @@ function setTreeNodeExpanded(path, expanded, filtered) {
   else state.filterCollapsed.add(path);
 }
 
-function handleTreeKeydown(event) {
-  const entry = event.target.closest?.(".tree-entry");
+function handleTreeKeydown(event: KeyboardEvent): void {
+  if (!(event.target instanceof Element)) return;
+  const entry = event.target.closest<HTMLElement>(".tree-entry");
   if (!entry) return;
   const entries = treeEntryList();
   const index = entries.indexOf(entry);
   if (index < 0) return;
-  const node = findNode(state.tree, entry.dataset.path);
+  // Every rendered tree entry carries data-path.
+  const node = findNode(state.tree, entry.dataset.path!);
   const filtered = Boolean(state.tagFilter || state.fileFilter);
-  const focusAt = (nextIndex) => {
+  const focusAt = (nextIndex: number): void => {
     const next = entries[nextIndex];
     if (!next) return;
     entries.forEach((item) => {
@@ -1588,7 +1775,7 @@ function handleTreeKeydown(event) {
         state.pendingTreeFocus = node.path;
         renderTree();
       } else {
-        const parentPath = parentOf(entry.dataset.path);
+        const parentPath = parentOf(entry.dataset.path!);
         if (parentPath) {
           focusAt(entries.findIndex((item) => item.dataset.path === parentPath));
         }
@@ -1604,7 +1791,11 @@ function handleTreeKeydown(event) {
   }
 }
 
-function renderNodes(nodes, depth, filtered) {
+function renderNodes(
+  nodes: TreeNode[],
+  depth: number,
+  filtered: boolean
+): void {
   const canDragReorder = featureOn("sortAndOrder.dragReorder");
   const canDragMove = featureOn("sortAndOrder.dragMove");
   const canDrag = canDragReorder || canDragMove;
@@ -1697,11 +1888,12 @@ function renderNodes(nodes, depth, filtered) {
         name: node.name,
       };
       els.rootDropZone.hidden = !state.dragSource.parent || !canDragMove;
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", node.path);
+      // A drag always carries a DataTransfer.
+      event.dataTransfer!.effectAllowed = "move";
+      event.dataTransfer!.setData("text/plain", node.path);
       row.classList.add("dragging");
     });
-    const clearDrop = () => {
+    const clearDrop = (): void => {
       row.classList.remove("drop-target", "drop-into");
       delete row.dataset.dropMode;
       els.tree.querySelectorAll(".drop-target, .drop-into").forEach((element) => {
@@ -1728,7 +1920,7 @@ function renderNodes(nodes, depth, filtered) {
         !isPathWithin(node.path, source.path);
       if (!canReorderHere && !canMoveInto) return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
+      event.dataTransfer!.dropEffect = "move";
       const rect = row.getBoundingClientRect();
       const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
       const into =
@@ -1764,23 +1956,29 @@ function renderNodes(nodes, depth, filtered) {
   }
 }
 
-async function dropReorder(targetNode, event) {
+async function dropReorder(
+  targetNode: TreeNode,
+  event: DragEvent
+): Promise<void> {
   const source = state.dragSource;
   if (!source) return;
   if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragReorder")) return;
   const parent = parentOf(targetNode.path);
   if (source.parent !== parent) return;
 
-  const siblingRows = [...els.tree.querySelectorAll(".tree-row")].filter(
-    (row) => row.dataset.parent === parent
-  );
-  const names = siblingRows.map((row) => row.dataset.name);
+  const siblingRows = [
+    ...els.tree.querySelectorAll<HTMLElement>(".tree-row"),
+  ].filter((row) => row.dataset.parent === parent);
+  // Rendered tree rows always set data-name.
+  const names = siblingRows.map((row) => row.dataset.name!);
   const sourceIndex = names.indexOf(source.name);
   if (sourceIndex === -1) return;
   names.splice(sourceIndex, 1);
   let targetIndex = names.indexOf(targetNode.name);
   if (targetIndex === -1) return;
-  const rect = event.currentTarget.getBoundingClientRect();
+  const row = event.currentTarget;
+  if (!(row instanceof HTMLElement)) return;
+  const rect = row.getBoundingClientRect();
   if (event.clientY > rect.top + rect.height / 2) targetIndex += 1;
   names.splice(targetIndex, 0, source.name);
 
@@ -1793,7 +1991,7 @@ async function dropReorder(targetNode, event) {
   }
 }
 
-function ensureExpanded(path) {
+function ensureExpanded(path: string): void {
   let parent = parentOf(path);
   while (parent) {
     state.expanded.add(parent);
@@ -1801,13 +1999,13 @@ function ensureExpanded(path) {
   }
 }
 
-function siblingNodes(node) {
+function siblingNodes(node: TreeNode): TreeNode[] {
   const parent = parentOf(node.path);
   if (!parent) return state.tree;
   return findNode(state.tree, parent)?.children ?? [];
 }
 
-async function moveNode(node, delta) {
+async function moveNode(node: TreeNode, delta: number): Promise<void> {
   if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragReorder")) return;
   const parent = parentOf(node.path);
   const siblings = siblingNodes(node);
@@ -1825,7 +2023,7 @@ async function moveNode(node, delta) {
   }
 }
 
-function compareNames(a, b) {
+function compareNames(a: string, b: string): number {
   const aLower = a.toLowerCase();
   const bLower = b.toLowerCase();
   if (aLower < bLower) return -1;
@@ -1835,7 +2033,7 @@ function compareNames(a, b) {
   return 0;
 }
 
-async function sortAlphabetically(parent) {
+async function sortAlphabetically(parent: string): Promise<void> {
   if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.sortButton")) return;
   const folder = parent ? findNode(state.tree, parent) : null;
   if (parent && !folder) {
@@ -1854,7 +2052,7 @@ async function sortAlphabetically(parent) {
   }
 }
 
-async function resetOrder(parent) {
+async function resetOrder(parent: string): Promise<void> {
   if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.resetAction")) return;
   try {
     await api.setSortOrder(parent, []);
@@ -1865,10 +2063,20 @@ async function resetOrder(parent) {
   }
 }
 
-function showContextMenu(x, y, node, source = null) {
+function showContextMenu(
+  x: number,
+  y: number,
+  node: TreeNode | null,
+  source: string | null = null
+): void {
   els.contextMenu.textContent = "";
   state.menuReturnFocus = document.activeElement;
-  const add = (label, action, danger = false, disabled = false) => {
+  const add = (
+    label: string,
+    action: () => unknown,
+    danger: boolean = false,
+    disabled: boolean = false
+  ): void => {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("role", "menuitem");
@@ -1881,10 +2089,11 @@ function showContextMenu(x, y, node, source = null) {
     });
     els.contextMenu.append(button);
   };
-  const separator = () => els.contextMenu.append(document.createElement("hr"));
+  const separator = (): void =>
+    els.contextMenu.append(document.createElement("hr"));
 
-  const can = (id) => featureOn(id);
-  const rule = () => {
+  const can = (id: string): boolean => featureOn(id);
+  const rule = (): void => {
     if (els.contextMenu.children.length) separator();
   };
 
@@ -1992,10 +2201,10 @@ function showContextMenu(x, y, node, source = null) {
   els.contextMenu.querySelector("button")?.focus();
 }
 
-function showFileContextMenu(x, y) {
+function showFileContextMenu(x: number, y: number): void {
   els.contextMenu.textContent = "";
   state.menuReturnFocus = document.activeElement;
-  const add = (label, action) => {
+  const add = (label: string, action: () => unknown): void => {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("role", "menuitem");
@@ -2006,7 +2215,7 @@ function showFileContextMenu(x, y) {
     });
     els.contextMenu.append(button);
   };
-  const path = state.currentFile.path;
+  const path = state.currentFile!.path;
   add("Properties…", () => showProperties(path));
   if (featureOn("revisions") && featureOn("revisions.contextAction")) {
     add("Show revisions…", () => showRevisions(path));
@@ -2023,7 +2232,7 @@ function showFileContextMenu(x, y) {
   els.contextMenu.querySelector("button")?.focus();
 }
 
-async function copyText(text) {
+async function copyText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
     setStatus("Path copied.");
@@ -2032,18 +2241,23 @@ async function copyText(text) {
   }
 }
 
-function appMenuRoots() {
+function appMenuRoots(): AppMenuRoot[] {
   return [
     { trigger: els.menuApplication, panel: els.applicationMenu },
     { trigger: els.menuEdit, panel: els.editMenu },
   ].filter((root) => root.trigger && root.panel);
 }
 
-function menuItems(panel) {
-  return [...panel.querySelectorAll(".menu-item:not(:disabled)")];
+function menuItems(panel: HTMLElement): HTMLButtonElement[] {
+  return [
+    ...panel.querySelectorAll<HTMLButtonElement>(".menu-item:not(:disabled)"),
+  ];
 }
 
-function openAppMenu(root, { focusFirst = false } = {}) {
+function openAppMenu(
+  root: AppMenuRoot,
+  { focusFirst = false }: { focusFirst?: boolean } = {}
+): void {
   if (!root || (root.trigger === els.menuEdit && !state.settings.layoutMenuTitlebar)) {
     return;
   }
@@ -2068,7 +2282,9 @@ function openAppMenu(root, { focusFirst = false } = {}) {
   }
 }
 
-function closeMenus({ restoreFocus = false } = {}) {
+function closeMenus(
+  { restoreFocus = false }: { restoreFocus?: boolean } = {}
+): void {
   for (const root of appMenuRoots()) {
     root.panel.hidden = true;
     root.trigger.setAttribute("aria-expanded", "false");
@@ -2083,7 +2299,7 @@ function closeMenus({ restoreFocus = false } = {}) {
   }
 }
 
-function refreshMenuState() {
+function refreshMenuState(): void {
   const panel = els.editMenu;
   if (!panel) return;
   const editor = state.editor;
@@ -2117,10 +2333,14 @@ function refreshMenuState() {
     "select-all": Boolean(editor),
   };
   for (const [command, enabled] of Object.entries(states)) {
-    const item = panel.querySelector(`[data-edit-command="${command}"]`);
+    const item = panel.querySelector<HTMLButtonElement>(
+      `[data-edit-command="${command}"]`
+    );
     if (item) item.disabled = !enabled;
   }
-  const undoItem = panel.querySelector('[data-edit-command="undo"]');
+  const undoItem = panel.querySelector<HTMLButtonElement>(
+    '[data-edit-command="undo"]'
+  );
   if (undoItem) {
     undoItem.title = editorUndoEnabled
       ? "Undo the last edit"
@@ -2128,7 +2348,9 @@ function refreshMenuState() {
         ? `Undo ${state.undoInfo.undoLabel}`
         : "Nothing to undo";
   }
-  const redoItem = panel.querySelector('[data-edit-command="redo"]');
+  const redoItem = panel.querySelector<HTMLButtonElement>(
+    '[data-edit-command="redo"]'
+  );
   if (redoItem) {
     redoItem.title = editorRedoEnabled
       ? "Redo the last edit"
@@ -2138,7 +2360,7 @@ function refreshMenuState() {
   }
 }
 
-function runAppMenuCommand(command) {
+function runAppMenuCommand(command: string): void {
   switch (command) {
     case "open-repository":
       chooseRepository();
@@ -2158,7 +2380,7 @@ function runAppMenuCommand(command) {
   }
 }
 
-function runEditCommand(command) {
+function runEditCommand(command: string): void {
   const editor = state.editor;
   switch (command) {
     case "undo":
@@ -2201,7 +2423,7 @@ function runEditCommand(command) {
   updateControls();
 }
 
-function switchAppMenu(root, direction) {
+function switchAppMenu(root: AppMenuRoot, direction: number): void {
   const roots = appMenuRoots();
   const index = roots.indexOf(root);
   if (index === -1) return;
@@ -2209,7 +2431,7 @@ function switchAppMenu(root, direction) {
   openAppMenu(next, { focusFirst: true });
 }
 
-function wireMenus() {
+function wireMenus(): void {
   for (const root of appMenuRoots()) {
     const { trigger, panel } = root;
     trigger.addEventListener("pointerdown", () => {
@@ -2241,7 +2463,8 @@ function wireMenus() {
       }
     });
     panel.addEventListener("click", (event) => {
-      const item = event.target.closest(".menu-item");
+      if (!(event.target instanceof Element)) return;
+      const item = event.target.closest<HTMLButtonElement>(".menu-item");
       if (!item || item.disabled) return;
       event.stopPropagation();
       const editCommand = item.dataset.editCommand;
@@ -2252,7 +2475,9 @@ function wireMenus() {
     });
     panel.addEventListener("keydown", (event) => {
       const items = menuItems(panel);
-      const index = items.indexOf(document.activeElement);
+      const active = document.activeElement;
+      const index =
+        active instanceof HTMLButtonElement ? items.indexOf(active) : -1;
       if (event.key === "ArrowDown") {
         event.preventDefault();
         items[Math.min(items.length - 1, index + 1)]?.focus();
@@ -2278,28 +2503,39 @@ function wireMenus() {
   }
   document.addEventListener("click", (event) => {
     if (!state.openMenu) return;
-    if (event.target.closest?.(".app-menu-bar")) return;
+    if (event.target instanceof Element && event.target.closest(".app-menu-bar")) {
+      return;
+    }
     closeMenus();
   });
 }
 
-function hideContextMenu() {
+function hideContextMenu(): void {
   closeColorMenu();
   els.contextMenu.hidden = true;
   els.contextMenu.textContent = "";
   const returnFocus = state.menuReturnFocus;
   state.menuReturnFocus = null;
-  if (returnFocus?.isConnected) returnFocus.focus();
+  if (
+    returnFocus?.isConnected &&
+    (returnFocus instanceof HTMLElement || returnFocus instanceof SVGElement)
+  ) {
+    returnFocus.focus();
+  }
 }
 
-function targetFolder() {
+function targetFolder(): string {
   if (!state.selected) return "";
   const node = findNode(state.tree, state.selected);
   if (!node) return "";
   return node.isDir ? node.path : parentOf(node.path);
 }
 
-async function createItem(parent, isDir, { fromEmpty = false } = {}) {
+async function createItem(
+  parent: string,
+  isDir: boolean,
+  { fromEmpty = false }: { fromEmpty?: boolean } = {}
+): Promise<void> {
   if (!state.repository) return;
   const allowed = fromEmpty
     ? featureOn("createDelete") && featureOn("createDelete.emptyNewFile")
@@ -2347,7 +2583,7 @@ async function createItem(parent, isDir, { fromEmpty = false } = {}) {
   }
 }
 
-async function deleteItem(node) {
+async function deleteItem(node: TreeNode): Promise<void> {
   if (!featureOn("createDelete") || !featureOn("createDelete.deleteAction")) return;
   const kind = node.isDir ? "folder" : "file";
   const affectsCurrent =
@@ -2374,7 +2610,7 @@ async function deleteItem(node) {
   }
 }
 
-async function togglePin(path) {
+async function togglePin(path: string): Promise<void> {
   if (
     !featureOn("pinned") ||
     !featureOn("pinned.contextActions")
@@ -2391,7 +2627,7 @@ async function togglePin(path) {
   }
 }
 
-async function removeRecent(path) {
+async function removeRecent(path: string): Promise<void> {
   if (!featureOn("recentFiles") || !featureOn("recentFiles.removeAction")) {
     return;
   }
@@ -2404,7 +2640,7 @@ async function removeRecent(path) {
   }
 }
 
-function revealInTree(path) {
+function revealInTree(path: string): void {
   const node = findNode(state.tree, path);
   if (!node) {
     setStatus("That file is no longer in the repository.");
@@ -2417,8 +2653,8 @@ function revealInTree(path) {
   setStatus(`Revealed ${basename(path)} in the repository tree.`);
 }
 
-function remapExpanded(oldPath, newPath) {
-  const next = new Set();
+function remapExpanded(oldPath: string, newPath: string): void {
+  const next = new Set<string>();
   for (const path of state.expanded) {
     next.add(
       isPathWithin(path, oldPath)
@@ -2429,12 +2665,12 @@ function remapExpanded(oldPath, newPath) {
   state.expanded = next;
 }
 
-function colorFileName() {
+function colorFileName(): void {
   if (!state.currentFile) return;
   decorateTreeEntry(els.fileGlyph, els.fileName, state.currentFile.path, false);
 }
 
-function remapCurrentFile(oldPath, newPath) {
+function remapCurrentFile(oldPath: string, newPath: string): void {
   if (!state.currentFile || !isPathWithin(state.currentFile.path, oldPath)) return;
   state.currentFile.path = `${newPath}${state.currentFile.path.slice(oldPath.length)}`;
   state.currentFile.name = basename(state.currentFile.path);
@@ -2448,7 +2684,10 @@ function remapCurrentFile(oldPath, newPath) {
   updateTitle();
 }
 
-async function movePath(sourcePath, targetParent) {
+async function movePath(
+  sourcePath: string,
+  targetParent: string
+): Promise<void> {
   if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
   if (state.saving || state.moving) return;
   if (sourcePath === targetParent || isPathWithin(targetParent, sourcePath)) {
@@ -2475,7 +2714,7 @@ async function movePath(sourcePath, targetParent) {
   }
 }
 
-async function editTags(path) {
+async function editTags(path: string): Promise<void> {
   if (!featureOn("tags") || !featureOn("tags.contextAction")) return;
   const current = (state.tags.get(path) ?? []).join(", ");
   const value = await promptTags(current);
@@ -2493,7 +2732,7 @@ async function editTags(path) {
   }
 }
 
-async function showRevisions(path) {
+async function showRevisions(path: string): Promise<void> {
   if (!featureOn("revisions") || !featureOn("revisions.contextAction")) return;
   try {
     const revisions = await api.listRevisions(path);
@@ -2546,8 +2785,8 @@ async function showRevisions(path) {
 
 /** Encoding, line endings, size, and counts for a file.
  *  Uses the live editor text when the file on screen is the one asked for. */
-async function showProperties(path) {
-  let file;
+async function showProperties(path: string): Promise<void> {
+  let file: FileRead;
   try {
     file = await api.readFile(path);
   } catch (error) {
@@ -2555,12 +2794,15 @@ async function showProperties(path) {
     return;
   }
   const live = state.currentFile?.path === file.path && state.editor;
-  const content = live ? state.editor.getValue() : file.content ?? "";
-  const size = live && state.currentFile.size != null ? state.currentFile.size : file.size;
+  const content = live && state.editor ? state.editor.getValue() : file.content ?? "";
+  const size =
+    live && state.currentFile && state.currentFile.size != null
+      ? state.currentFile.size
+      : file.size;
   const words = countWords(content);
   const chars = content.replace(/\s/g, "").length;
   const lines = content ? content.split(/\r\n|\r|\n/).length : 0;
-  const rows = [
+  const rows: [string, string | null | undefined][] = [
     ["Name", file.name],
     ["Location", `${state.repository?.path ?? ""}${parentOf(file.path) ? `\\${parentOf(file.path).replaceAll("/", "\\")}` : ""}`],
     ["Encoding", file.encodingLabel],
@@ -2582,18 +2824,18 @@ async function showProperties(path) {
   els.propertiesDialog.showModal();
 }
 
-function askUnsavedChanges() {
-  return new Promise((resolve) => {
+function askUnsavedChanges(): Promise<string> {
+  return new Promise<string>((resolve) => {
     const name = state.currentFile ? basename(state.currentFile.path) : "the open file";
     els.unsavedCopy.textContent = `Save changes to ${name} before continuing?`;
     els.unsavedDialog.returnValue = "";
-    const onClose = () => {
+    const onClose = (): void => {
       els.unsavedDialog.removeEventListener("close", onClose);
       resolve(els.unsavedDialog.returnValue || "cancel");
     };
     els.unsavedDialog.addEventListener("close", onClose);
     // showModal() throws if another dialog is already modal; close those first.
-    document.querySelectorAll("dialog[open]").forEach((dialog) => {
+    document.querySelectorAll<HTMLDialogElement>("dialog[open]").forEach((dialog) => {
       if (dialog !== els.unsavedDialog) dialog.close();
     });
     if (els.unsavedDialog.open) {
@@ -2604,7 +2846,7 @@ function askUnsavedChanges() {
   });
 }
 
-async function resolvePendingChanges() {
+async function resolvePendingChanges(): Promise<boolean> {
   if (!state.dirty) return true;
   clearAutosave();
   const choice = await askUnsavedChanges();
@@ -2620,7 +2862,10 @@ async function resolvePendingChanges() {
   return true;
 }
 
-async function openFile(path, line = null) {
+async function openFile(
+  path: string,
+  line: number | null = null
+): Promise<boolean> {
   if (!state.repository) return false;
   if (state.currentFile?.path === path) {
     if (line) state.editor?.openAtLine(line);
@@ -2656,7 +2901,7 @@ async function openFile(path, line = null) {
   }
 }
 
-function mountFile(file, line = null) {
+function mountFile(file: FileRead, line: number | null = null): void {
   closeEditor({ silent: true });
   state.currentFile = {
     path: file.path,
@@ -2710,7 +2955,9 @@ function mountFile(file, line = null) {
 }
 
 /** Closes the open file, asking about unsaved changes before letting it go. */
-async function closeCurrentFile({ silent = false } = {}) {
+async function closeCurrentFile(
+  { silent = false }: { silent?: boolean } = {}
+): Promise<boolean> {
   if (!state.currentFile) return false;
   const name = state.currentFile.name;
   const path = state.currentFile.path;
@@ -2725,7 +2972,7 @@ async function closeCurrentFile({ silent = false } = {}) {
   return true;
 }
 
-function closeEditor({ silent = false } = {}) {
+function closeEditor({ silent = false }: { silent?: boolean } = {}): void {
   clearAutosave();
   state.autosavePaused = false;
   state.editor?.destroy();
@@ -2748,14 +2995,14 @@ function closeEditor({ silent = false } = {}) {
   if (!silent) setStatus("Ready.");
 }
 
-function clearAutosave() {
+function clearAutosave(): void {
   if (state.autosaveTimer !== null) {
     clearTimeout(state.autosaveTimer);
     state.autosaveTimer = null;
   }
 }
 
-function scheduleAutosave() {
+function scheduleAutosave(): void {
   if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
   if (!state.settings.autosaveEnabled) return;
@@ -2767,7 +3014,7 @@ function scheduleAutosave() {
   state.autosaveTimer = setTimeout(runAutosave, seconds * 1000);
 }
 
-async function runAutosave() {
+async function runAutosave(): Promise<void> {
   state.autosaveTimer = null;
   if (!featureOn("autosave") || !featureOn("autosave.engine")) return;
   if (state.autosavePaused || !state.dirty) return;
@@ -2775,7 +3022,7 @@ async function runAutosave() {
   if (!saved && state.dirty) scheduleAutosave();
 }
 
-function markDirty() {
+function markDirty(): void {
   if (!state.currentFile || state.currentFile.readOnly) return;
   updateFileStats(state.editor?.getValue() ?? "", state.currentFile.size);
   if (!state.dirty) {
@@ -2787,7 +3034,9 @@ function markDirty() {
   scheduleAutosave();
 }
 
-async function saveCurrent(options = {}) {
+async function saveCurrent(
+  options: { automatic?: boolean } = {}
+): Promise<boolean> {
   const automatic = options?.automatic === true;
   if (!state.currentFile) return false;
   if (state.currentFile.readOnly) {
@@ -2838,7 +3087,7 @@ async function saveCurrent(options = {}) {
   }
 }
 
-async function reloadCurrent(silent = false) {
+async function reloadCurrent(silent: boolean = false): Promise<void> {
   if (!state.currentFile) return;
   const line = state.editor
     ? state.editor.view.state.doc.lineAt(state.editor.view.state.selection.main.head).number
@@ -2859,7 +3108,7 @@ async function reloadCurrent(silent = false) {
   }
 }
 
-function renderFileTags() {
+function renderFileTags(): void {
   els.fileTags.textContent = "";
   if (!state.currentFile) return;
   const tags = state.tags.get(state.currentFile.path) ?? [];
@@ -2884,7 +3133,7 @@ function renderFileTags() {
 /* Undo and redo                                                       */
 /* ------------------------------------------------------------------ */
 
-async function refreshUndoState() {
+async function refreshUndoState(): Promise<void> {
   if (!state.repository) {
     state.undoInfo = { undoLabel: null, redoLabel: null };
     updateControls();
@@ -2899,11 +3148,11 @@ async function refreshUndoState() {
 }
 
 /** Text as it is on disk right now, used as the redo target for an edit. */
-function diskText() {
+function diskText(): string {
   return state.diskContent ?? "";
 }
 
-async function undo() {
+async function undo(): Promise<void> {
   if (!featureOn("repositoryUndo")) return;
   if (!state.repository || state.undoBusy) return;
   if (state.currentFile && state.dirty) {
@@ -2947,7 +3196,7 @@ async function undo() {
   }
 }
 
-async function redo() {
+async function redo(): Promise<void> {
   if (!featureOn("repositoryUndo")) return;
   if (!state.repository || state.undoBusy || !state.undoInfo.redoLabel) return;
   const currentPath = state.currentFile?.path ?? null;
@@ -2965,7 +3214,7 @@ async function redo() {
 }
 
 /** Editor shortcuts must not reach repository undo when that control is off. */
-function undoFromShortcut() {
+function undoFromShortcut(): boolean {
   if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
     return false;
   }
@@ -2973,7 +3222,7 @@ function undoFromShortcut() {
   return true;
 }
 
-function redoFromShortcut() {
+function redoFromShortcut(): boolean {
   if (!featureOn("repositoryUndo") || !featureOn("repositoryUndo.shortcuts")) {
     return false;
   }
@@ -2983,14 +3232,16 @@ function redoFromShortcut() {
 
 /** Bring the tree, the open editor and the organization lists back in step
  *  with the repository after a step was undone or redone. */
-async function afterUndoStep(previousPath) {
+async function afterUndoStep(previousPath: string | null): Promise<void> {
   await loadTree();
   await refreshOrganization();
   await refreshUndoState();
   await syncEditorWithDisk(previousPath);
 }
 
-async function syncEditorWithDisk(previousPath) {
+async function syncEditorWithDisk(
+  previousPath: string | null
+): Promise<void> {
   if (!state.currentFile) return;
   const path = state.currentFile.path;
   const found = findNode(state.tree, path);
@@ -3027,7 +3278,7 @@ async function syncEditorWithDisk(previousPath) {
   renderTree();
 }
 
-function toggleWrap() {
+function toggleWrap(): void {
   if (!featureOn("wrap") || !featureOn("wrap.toggle")) return;
   state.wrap = !state.wrap;
   writeWrapSetting(state.wrap);
@@ -3036,7 +3287,7 @@ function toggleWrap() {
 }
 
 /** Keep the toolbar button and the Edit > Word Wrap check in step. */
-function syncWrapControls() {
+function syncWrapControls(): void {
   els.wrapToggle.textContent = state.wrap ? "Wrap on" : "Wrap off";
   els.wrapToggle.setAttribute("aria-pressed", String(state.wrap));
   els.menuWrap?.setAttribute("aria-checked", String(state.wrap));
@@ -3046,7 +3297,7 @@ function syncWrapControls() {
 /* Search                                                              */
 /* ------------------------------------------------------------------ */
 
-function focusSearch() {
+function focusSearch(): void {
   if (
     !featureOn("search") ||
     !featureOn("search.toolbar") ||
@@ -3058,14 +3309,14 @@ function focusSearch() {
   els.search.select();
 }
 
-function hideResults() {
+function hideResults(): void {
   state.searchSequence += 1;
   els.searchResults.hidden = true;
   els.resultsList.textContent = "";
   els.resultsEmpty.hidden = true;
 }
 
-async function runSearch() {
+async function runSearch(): Promise<void> {
   if (
     !featureOn("search") ||
     !featureOn("search.toolbar") ||
@@ -3092,7 +3343,7 @@ async function runSearch() {
   }
 }
 
-function renderResults(hits) {
+function renderResults(hits: SearchHit[]): void {
   if (!featureOn("search.results")) {
     hideResults();
     return;
@@ -3140,8 +3391,9 @@ function renderResults(hits) {
 /* Dialogs                                                             */
 /* ------------------------------------------------------------------ */
 
-function promptName({ title, copy, label, submit, initial, error }) {
-  return new Promise((resolve) => {
+function promptName(options: PromptNameOptions): Promise<string | null> {
+  const { title, copy, label, submit, initial, error } = options;
+  return new Promise<string | null>((resolve) => {
     els.promptTitle.textContent = title;
     els.promptCopy.textContent = copy;
     els.promptLabel.textContent = label;
@@ -3150,7 +3402,7 @@ function promptName({ title, copy, label, submit, initial, error }) {
     els.promptError.hidden = !error;
     els.promptError.textContent = error ?? "";
     els.promptDialog.returnValue = "";
-    const onClose = () => {
+    const onClose = (): void => {
       els.promptDialog.removeEventListener("close", onClose);
       const accepted = els.promptDialog.returnValue === "default";
       resolve(accepted ? els.promptInput.value : null);
@@ -3164,12 +3416,12 @@ function promptName({ title, copy, label, submit, initial, error }) {
   });
 }
 
-function promptTags(initial) {
-  return new Promise((resolve) => {
+function promptTags(initial: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
     els.tagsInput.value = initial ?? "";
     els.tagsError.hidden = true;
     els.tagsDialog.returnValue = "";
-    const onClose = () => {
+    const onClose = (): void => {
       els.tagsDialog.removeEventListener("close", onClose);
       resolve(els.tagsDialog.returnValue === "default" ? els.tagsInput.value : null);
     };
@@ -3188,7 +3440,7 @@ function promptTags(initial) {
 
 let limitTarget = "pinned";
 
-function openLimitDialog(target) {
+function openLimitDialog(target: string): void {
   limitTarget = target === "recent" ? "recent" : "pinned";
   const pinned = limitTarget === "pinned";
   const current = state.settings[pinned ? "pinnedLimit" : "recentLimit"] ?? 5;
@@ -3205,7 +3457,7 @@ function openLimitDialog(target) {
   }, 0);
 }
 
-async function saveLimitFromForm() {
+async function saveLimitFromForm(): Promise<void> {
   const value = Math.round(Number(els.limitInput.value));
   if (!Number.isFinite(value) || value < 1 || value > 100) {
     els.limitError.hidden = false;
@@ -3240,7 +3492,7 @@ async function saveLimitFromForm() {
   }
 }
 
-const SETTING_ELEMENT_IDS = {
+const SETTING_ELEMENT_IDS: Record<string, string> = {
   theme: "setting-theme",
   accent: "setting-accent",
   contentBackground: "setting-content-background",
@@ -3260,14 +3512,18 @@ const SETTING_ELEMENT_IDS = {
   recentRepositoryLimit: "setting-recent-repository-limit",
 };
 
-const SETTING_KEYS_BY_ELEMENT_ID = Object.freeze({
+const SETTING_KEYS_BY_ELEMENT_ID: Record<string, string> = Object.freeze({
   ...Object.fromEntries(
     Object.entries(SETTING_ELEMENT_IDS).map(([key, id]) => [id, key])
   ),
   "setting-default-repository": "defaultRepository",
 });
 
-const SETTINGS_SECTIONS = {
+// Field keys are typed as Settings keys so defaults can be read generically.
+const SETTINGS_SECTIONS: Record<
+  string,
+  { fields: (keyof Settings)[]; features: string[] }
+> = {
   appearance: {
     fields: [
       "theme",
@@ -3343,12 +3599,14 @@ const SETTINGS_SECTIONS = {
   },
 };
 
-function settingsElement(key) {
+function settingsElement(
+  key: string
+): HTMLInputElement | HTMLSelectElement | null {
   const id = SETTING_ELEMENT_IDS[key];
-  return id ? $(id) : null;
+  return id ? $<HTMLInputElement | HTMLSelectElement>(id) : null;
 }
 
-function showSettingsError(message) {
+function showSettingsError(message: string | null | undefined): void {
   if (!els.settingsError) return;
   if (!message) {
     els.settingsError.hidden = true;
@@ -3359,10 +3617,10 @@ function showSettingsError(message) {
   els.settingsError.textContent = message;
 }
 
-function showSavedIndicator() {
+function showSavedIndicator(): void {
   if (!els.settingsSaved) return;
   els.settingsSaved.hidden = false;
-  clearTimeout(state.savedIndicatorTimer);
+  clearTimeout(state.savedIndicatorTimer ?? undefined);
   state.savedIndicatorTimer = setTimeout(() => {
     els.settingsSaved.hidden = true;
   }, 1600);
@@ -3372,11 +3630,16 @@ function showSavedIndicator() {
  * Merge a backend settings response over the local object. Fields the server
  * omits (older backends, or client-only v1.2 fields) keep their local values.
  */
-function mergeSettingsResponse(local, response) {
-  const merged = { ...local };
+function mergeSettingsResponse(
+  local: Settings,
+  response: unknown
+): Settings {
+  const merged: Settings = { ...local };
   if (response && typeof response === "object" && !Array.isArray(response)) {
     for (const [key, value] of Object.entries(response)) {
-      if (value !== undefined) merged[key] = value;
+      if (value !== undefined) {
+        (merged as unknown as Record<string, unknown>)[key] = value;
+      }
     }
   }
   if (!Array.isArray(merged.disabledFeatures)) {
@@ -3398,7 +3661,14 @@ function mergeSettingsResponse(local, response) {
   return merged;
 }
 
-function clampSettingNumber(element, min, max, fallback, label, issues) {
+function clampSettingNumber(
+  element: HTMLInputElement | HTMLSelectElement | null,
+  min: number,
+  max: number,
+  fallback: number,
+  label: string,
+  issues: string[]
+): number {
   const raw = element?.value?.trim() ?? "";
   let value = Math.round(Number(raw));
   if (raw === "" || !Number.isFinite(value)) {
@@ -3413,8 +3683,10 @@ function clampSettingNumber(element, min, max, fallback, label, issues) {
   return value;
 }
 
-function selectedAccentAreas() {
-  const selected = [...document.querySelectorAll("[data-accent-area]")]
+function selectedAccentAreas(): string[] {
+  const selected = [
+    ...document.querySelectorAll<HTMLInputElement>("[data-accent-area]"),
+  ]
     .filter((input) => input.checked)
     .map((input) => input.dataset.accentArea);
   return normalizeAccentAreas(selected);
@@ -3423,7 +3695,10 @@ function selectedAccentAreas() {
 const AUTOSAVE_MAX_SECS = 3600;
 
 /** Split a stored delay into the friendliest whole number and unit. */
-function autosaveDelayParts(seconds) {
+function autosaveDelayParts(seconds: number): {
+  amount: number;
+  unit: string;
+} {
   const total = Math.min(
     AUTOSAVE_MAX_SECS,
     Math.max(1, Math.round(Number(seconds) || 20))
@@ -3434,14 +3709,14 @@ function autosaveDelayParts(seconds) {
   return { amount: total, unit: "seconds" };
 }
 
-function syncAutosaveDelayFields(seconds) {
+function syncAutosaveDelayFields(seconds: number): void {
   const { amount, unit } = autosaveDelayParts(seconds);
   if (els.settingAutosaveIdle) els.settingAutosaveIdle.value = String(amount);
   if (els.settingAutosaveUnit) els.settingAutosaveUnit.value = unit;
 }
 
 /** Read the delay fields and store the result as seconds. */
-function autosaveDelayFromForm(issues) {
+function autosaveDelayFromForm(issues: string[]): number {
   const minutes = els.settingAutosaveUnit?.value === "minutes";
   const max = minutes ? 60 : AUTOSAVE_MAX_SECS;
   const amount = clampSettingNumber(
@@ -3456,10 +3731,10 @@ function autosaveDelayFromForm(issues) {
 }
 
 /** Build a complete settings object from the current dialog fields. */
-function buildSettingsFromForm() {
-  const issues = [];
+function buildSettingsFromForm(): { settings: Settings; issues: string[] } {
+  const issues: string[] = [];
 
-  const settings = {
+  const settings: Settings = {
     theme: els.settingTheme?.value ?? "system",
     accent: els.settingAccent?.value ?? "theme",
     contentBackground: els.settingContentBackground?.value ?? "theme",
@@ -3563,19 +3838,21 @@ function buildSettingsFromForm() {
   return { settings, issues };
 }
 
-function syncAccentAreaFields(value) {
+function syncAccentAreaFields(value: unknown): void {
   const selected = new Set(normalizeAccentAreas(value));
-  for (const input of document.querySelectorAll("[data-accent-area]")) {
-    input.checked = selected.has(input.dataset.accentArea);
+  for (const input of document.querySelectorAll<HTMLInputElement>(
+    "[data-accent-area]"
+  )) {
+    input.checked = selected.has(input.dataset.accentArea ?? "");
   }
 }
 
-function syncSettingsFields(values = state.settings) {
+function syncSettingsFields(values: Settings = state.settings): void {
   for (const [key, id] of Object.entries(SETTING_ELEMENT_IDS)) {
-    const element = $(id);
+    const element = $<HTMLInputElement | HTMLSelectElement>(id);
     if (!element) continue;
-    const value = values[key];
-    if (element.type === "checkbox") {
+    const value = (values as unknown as Record<string, unknown>)[key];
+    if (element instanceof HTMLInputElement && element.type === "checkbox") {
       element.checked = Boolean(value);
       continue;
     }
@@ -3601,7 +3878,7 @@ function syncSettingsFields(values = state.settings) {
 /* Features UI                                                         */
 /* ------------------------------------------------------------------ */
 
-function makeFeatureSwitch(id, label) {
+function makeFeatureSwitch(id: string, label: string): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "switch";
@@ -3612,7 +3889,7 @@ function makeFeatureSwitch(id, label) {
   return button;
 }
 
-function featureControlRow(control) {
+function featureControlRow(control: FeatureControl): HTMLElement {
   const row = document.createElement("div");
   row.className = "feature-control";
   const copy = document.createElement("div");
@@ -3628,7 +3905,7 @@ function featureControlRow(control) {
   return row;
 }
 
-function renderFeatures() {
+function renderFeatures(): void {
   if (!els.settingsFeatures) return;
   els.settingsFeatures.textContent = "";
   for (const category of FEATURE_CATEGORY_ORDER) {
@@ -3705,7 +3982,7 @@ function renderFeatures() {
   syncFeatureSwitches();
 }
 
-function renderUpdateAutoCheckSwitch() {
+function renderUpdateAutoCheckSwitch(): void {
   if (!els.settingsUpdateAutocheck) return;
   const control = controlsForGroup("updates").find(
     (item) => item.id === "updates.autoCheck"
@@ -3729,9 +4006,11 @@ function renderUpdateAutoCheckSwitch() {
 }
 
 /** Update every rendered switch from the draft feature list. */
-function syncFeatureSwitches() {
+function syncFeatureSwitches(): void {
   const draft = state.settingsDraftFeatures;
-  for (const button of document.querySelectorAll("[data-feature-toggle]")) {
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    "[data-feature-toggle]"
+  )) {
     const id = button.dataset.featureToggle;
     if (!id) continue;
     const group = groupOf(id);
@@ -3741,13 +4020,15 @@ function syncFeatureSwitches() {
     button.setAttribute("aria-checked", String(checked));
     button.disabled = groupOff;
   }
-  for (const row of document.querySelectorAll("[data-feature-group]")) {
+  for (const row of document.querySelectorAll<HTMLElement>(
+    "[data-feature-group]"
+  )) {
     const groupId = row.dataset.featureGroup;
-    row.classList.toggle("feature-group-off", draft.has(groupId));
+    row.classList.toggle("feature-group-off", draft.has(groupId ?? ""));
   }
 }
 
-function setFeatureEnabled(id, enabled) {
+function setFeatureEnabled(id: string, enabled: boolean): void {
   const group = groupOf(id);
   if (!group) return;
   if (enabled) state.settingsDraftFeatures.delete(id);
@@ -3764,15 +4045,23 @@ function setFeatureEnabled(id, enabled) {
 /* Settings panels, search, and auto-save                              */
 /* ------------------------------------------------------------------ */
 
-function settingsNavButtons() {
-  return [...(els.settingsDialog?.querySelectorAll("[data-settings-category]") ?? [])];
+function settingsNavButtons(): HTMLElement[] {
+  return [
+    ...(els.settingsDialog?.querySelectorAll<HTMLElement>(
+      "[data-settings-category]"
+    ) ?? []),
+  ];
 }
 
-function settingsPanels() {
-  return [...(els.settingsDialog?.querySelectorAll("[data-settings-panel]") ?? [])];
+function settingsPanels(): HTMLElement[] {
+  return [
+    ...(els.settingsDialog?.querySelectorAll<HTMLElement>(
+      "[data-settings-panel]"
+    ) ?? []),
+  ];
 }
 
-function activateSettingsSection(sectionId) {
+function activateSettingsSection(sectionId: string): void {
   const panels = settingsPanels();
   const target = panels.find((panel) => panel.dataset.settingsPanel === sectionId);
   if (!target) return;
@@ -3786,16 +4075,18 @@ function activateSettingsSection(sectionId) {
   updateSettingsPanelVisibility();
 }
 
-function updateSettingsPanelVisibility() {
+function updateSettingsPanelVisibility(): void {
   for (const panel of settingsPanels()) {
     const active = panel.dataset.settingsPanel === state.settingsSection;
     panel.hidden = !active || panel.dataset.searchVisible === "false";
   }
 }
 
-function settingFieldSearchText(field) {
-  const input = field.querySelector("input, select, textarea");
-  const key = SETTING_KEYS_BY_ELEMENT_ID[input?.id] ?? "";
+function settingFieldSearchText(field: HTMLElement): string {
+  const input = field.querySelector<HTMLInputElement | HTMLSelectElement>(
+    "input, select, textarea"
+  );
+  const key = SETTING_KEYS_BY_ELEMENT_ID[input?.id ?? ""] ?? "";
   return [
     field.dataset.settingsLabel ?? "",
     field.dataset.settingsHelp ?? "",
@@ -3807,11 +4098,18 @@ function settingFieldSearchText(field) {
     .toLowerCase();
 }
 
-function filterFeatureGroupsInSettings(query, categoryMatch) {
+function filterFeatureGroupsInSettings(
+  query: string,
+  categoryMatch: boolean
+): number {
   let visible = 0;
-  for (const category of els.settingsFeatures?.querySelectorAll(".feature-category") ?? []) {
+  for (const category of els.settingsFeatures?.querySelectorAll<HTMLElement>(
+    ".feature-category"
+  ) ?? []) {
     let categoryVisible = 0;
-    for (const group of category.querySelectorAll("[data-feature-group]")) {
+    for (const group of category.querySelectorAll<HTMLElement>(
+      "[data-feature-group]"
+    )) {
       const match =
         !query || categoryMatch || (group.dataset.featureSearch ?? "").includes(query);
       group.hidden = !match;
@@ -3823,13 +4121,13 @@ function filterFeatureGroupsInSettings(query, categoryMatch) {
   return visible;
 }
 
-function applySettingsSearch() {
+function applySettingsSearch(): void {
   if (!els.settingsDialog) return;
   const query = state.settingsQuery.trim().toLowerCase();
   const navButtons = settingsNavButtons();
   const panels = settingsPanels();
   let anyVisible = false;
-  let firstVisible = null;
+  let firstVisible: HTMLElement | null = null;
   const currentPanel = panels.find(
     (panel) => panel.dataset.settingsPanel === state.settingsSection
   );
@@ -3845,7 +4143,7 @@ function applySettingsSearch() {
       query && (nav?.textContent ?? "").toLowerCase().includes(query)
     );
     let visibleFields = 0;
-    for (const field of panel.querySelectorAll(".settings-field")) {
+    for (const field of panel.querySelectorAll<HTMLElement>(".settings-field")) {
       if (field.closest(".feature-off")) {
         // The feature itself hides this field; leave its own search state
         // untouched so it can show again when the feature is restored.
@@ -3883,13 +4181,13 @@ function applySettingsSearch() {
     !currentNav.hidden &&
     !currentPanel?.classList.contains("feature-off");
   if (!currentVisible && firstVisible) {
-    activateSettingsSection(firstVisible.dataset.settingsPanel);
+    activateSettingsSection(firstVisible.dataset.settingsPanel ?? "");
   } else {
     updateSettingsPanelVisibility();
   }
 }
 
-function refreshSettingsDynamic() {
+function refreshSettingsDynamic(): void {
   if (els.settingsSearchInfo) {
     if (!state.repository) {
       els.settingsSearchInfo.textContent =
@@ -3962,7 +4260,7 @@ function refreshSettingsDynamic() {
   syncFeatureSwitches();
 }
 
-function openSettings() {
+function openSettings(): void {
   state.settingsDraftRepository = state.settings.defaultRepository ?? null;
   state.settingsDraftFeatures = new Set(
     Array.isArray(state.settings.disabledFeatures)
@@ -3992,24 +4290,24 @@ function openSettings() {
   els.settingsDialog.showModal();
 }
 
-function scheduleSettingsSave() {
-  clearTimeout(state.settingsSaveTimer);
+function scheduleSettingsSave(): void {
+  clearTimeout(state.settingsSaveTimer ?? undefined);
   state.settingsSaveTimer = setTimeout(() => {
     state.settingsSaveTimer = null;
     saveSettingsNow();
   }, 500);
 }
 
-function flushSettingsSave() {
-  clearTimeout(state.settingsSaveTimer);
+function flushSettingsSave(): Promise<boolean> {
+  clearTimeout(state.settingsSaveTimer ?? undefined);
   state.settingsSaveTimer = null;
 
-  const finish = async () => {
+  const finish = async (): Promise<boolean> => {
     // A change made while the previous request was in flight leaves
     // settingsDirty true. Keep saving until the form and disk agree so closing
     // the dialog cannot drop the newest edit.
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      clearTimeout(state.settingsSaveTimer);
+      clearTimeout(state.settingsSaveTimer ?? undefined);
       state.settingsSaveTimer = null;
       if (!state.settingsDirty) break;
       const saved = await saveSettingsNow();
@@ -4032,12 +4330,12 @@ function flushSettingsSave() {
  * Auto-save the complete settings object. Requests are serialized so rapid
  * changes cannot race; each request reads the current fields when it runs.
  */
-function saveSettingsNow() {
-  clearTimeout(state.settingsSaveTimer);
+function saveSettingsNow(): Promise<boolean> {
+  clearTimeout(state.settingsSaveTimer ?? undefined);
   state.settingsSaveTimer = null;
   if (!state.settingsDirty) return Promise.resolve(true);
 
-  const run = async () => {
+  const run = async (): Promise<boolean> => {
     const { settings, issues } = buildSettingsFromForm();
     const builtRevision = state.settingsRevision;
     state.settingsDirty = false;
@@ -4086,7 +4384,7 @@ function saveSettingsNow() {
   return task;
 }
 
-async function closeSettings() {
+async function closeSettings(): Promise<void> {
   if (state.settingsClosing) return;
   state.settingsClosing = true;
   try {
@@ -4098,7 +4396,7 @@ async function closeSettings() {
   }
 }
 
-function useDesktopMenuLayout() {
+function useDesktopMenuLayout(): void {
   if (els.settingLayoutMenuTitlebar) els.settingLayoutMenuTitlebar.checked = true;
   if (els.settingLayoutStatusbar) els.settingLayoutStatusbar.checked = false;
   if (els.settingLayoutFileActions) els.settingLayoutFileActions.checked = false;
@@ -4107,7 +4405,7 @@ function useDesktopMenuLayout() {
   saveSettingsNow();
 }
 
-function resetSettingsSection(sectionId) {
+function resetSettingsSection(sectionId: string): void {
   const section = SETTINGS_SECTIONS[sectionId];
   if (!section) return;
   for (const key of section.fields) {
@@ -4161,7 +4459,7 @@ function resetSettingsSection(sectionId) {
   saveSettingsNow();
 }
 
-async function resetAllSettings() {
+async function resetAllSettings(): Promise<void> {
   const confirmed = await confirmDialog(
     "Reset all settings and feature switches to their defaults? Your files, tags, pins, recents, and revisions are kept.",
     { title: "Reset all settings", kind: "warning" }
@@ -4190,7 +4488,7 @@ async function resetAllSettings() {
   saveSettingsNow();
 }
 
-async function clearRecentRepositories() {
+async function clearRecentRepositories(): Promise<void> {
   if (
     !featureOn("recentRepositories") ||
     !featureOn("recentRepositories.removeAction")
@@ -4221,13 +4519,15 @@ async function clearRecentRepositories() {
   await repositories.clearRecent();
 }
 
-async function rebuildSearchIndex() {
+async function rebuildSearchIndex(): Promise<void> {
   if (!state.repository) {
     setStatus("Open a repository first.");
     refreshSettingsDynamic();
     return;
   }
-  const buttons = [els.maintenanceRescan, els.searchRescan].filter(Boolean);
+  const buttons = [els.maintenanceRescan, els.searchRescan].filter(
+    (button): button is HTMLButtonElement => Boolean(button)
+  );
   for (const button of buttons) button.disabled = true;
   setStatus("Rebuilding the search index…");
   if (els.settingsSearchInfo) {
@@ -4252,8 +4552,11 @@ async function rebuildSearchIndex() {
   }
 }
 
+/** Result shape returned by the updater module's check functions. */
+type UpdateCheckResult = Awaited<ReturnType<typeof checkForUpdate>>;
+
 /** Show the notify-only banner. The banner mirrors state.updateInfo. */
-function showUpdateBanner(result) {
+function showUpdateBanner(result: UpdateCheckResult): void {
   if (!els.updateBanner) return;
   if (
     !result?.configured ||
@@ -4273,12 +4576,12 @@ function showUpdateBanner(result) {
   els.updateBanner.hidden = false;
 }
 
-function hideUpdateBanner() {
+function hideUpdateBanner(): void {
   if (els.updateBanner) els.updateBanner.hidden = true;
 }
 
 /** Plain-language status for Settings > Updates. */
-function updateStatusFor(result) {
+function updateStatusFor(result: UpdateCheckResult): string {
   if (!result.configured) return updateInactiveStatus();
   if (result.error) return result.error;
   if (result.updateAvailable && result.latestVersion) {
@@ -4288,7 +4591,7 @@ function updateStatusFor(result) {
   return "No published release is available.";
 }
 
-function applyUpdateResult(result) {
+function applyUpdateResult(result: UpdateCheckResult): void {
   state.updateInfo = {
     currentVersion: result.currentVersion || state.version,
     latestVersion: result.latestVersion ?? null,
@@ -4306,7 +4609,7 @@ function applyUpdateResult(result) {
  * Launch check: guarded by the updates group and auto-check control, cached
  * for 24 hours, and deliberately not awaited so startup is never blocked.
  */
-async function runLaunchUpdateCheck() {
+async function runLaunchUpdateCheck(): Promise<void> {
   if (!featureOn("updates")) return;
   if (!featureOn("updates.autoCheck")) {
     state.updateInfo.status = "Automatic update checks are off.";
@@ -4338,7 +4641,7 @@ async function runLaunchUpdateCheck() {
   }
 }
 
-async function checkUpdatesNow() {
+async function checkUpdatesNow(): Promise<void> {
   // Manual checks stay available when only automatic checks are off.
   if (!featureOn("updates") || !featureOn("updates.settingsSection")) return;
   if (!updateSourceConfigured()) {
@@ -4353,7 +4656,8 @@ async function checkUpdatesNow() {
   refreshSettingsDynamic();
   try {
     const result = await checkForUpdate({ currentVersion: state.version });
-    if (result.configured) recordUpdateCheck(result.checkedAt);
+    // checkedAt is nullable, but the helper ignores non-positive values.
+    if (result.configured) recordUpdateCheck(result.checkedAt as number);
     applyUpdateResult(result);
   } catch (error) {
     state.updateInfo = {
@@ -4368,14 +4672,14 @@ async function checkUpdatesNow() {
   }
 }
 
-async function offerDesktopShortcut() {
+async function offerDesktopShortcut(): Promise<void> {
   if (
     !featureOn("desktopShortcut") ||
     !featureOn("desktopShortcut.firstRunPrompt")
   ) {
     return;
   }
-  let status;
+  let status: DesktopShortcutStatus;
   try {
     status = await api.desktopShortcutStatus();
   } catch {
@@ -4398,15 +4702,15 @@ async function offerDesktopShortcut() {
 /* Events                                                              */
 /* ------------------------------------------------------------------ */
 
-function wirePaneResizer() {
+function wirePaneResizer(): void {
   let dragging = false;
-  const finish = () => {
+  const finish = (): void => {
     if (!dragging) return;
     dragging = false;
     document.body.classList.remove("resizing");
     saveSidebarWidth();
   };
-  const updateFromPointer = (event) => {
+  const updateFromPointer = (event: PointerEvent): void => {
     const left = els.layout.getBoundingClientRect().left;
     applySidebarWidth(event.clientX - left);
   };
@@ -4438,25 +4742,27 @@ function wirePaneResizer() {
   });
 }
 
-function wireRootDrop(element) {
+function wireRootDrop(element: HTMLElement): void {
   element.addEventListener("dragover", (event) => {
+    if (!(event.target instanceof Element)) return;
     if (
       !state.dragSource?.parent ||
       !featureOn("sortAndOrder") ||
       !featureOn("sortAndOrder.dragMove") ||
-      event.target.closest?.(".tree-row")
+      event.target.closest(".tree-row")
     ) {
       return;
     }
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer!.dropEffect = "move";
     element.classList.add("drop-root");
   });
   element.addEventListener("dragleave", (event) => {
     if (event.target === element) element.classList.remove("drop-root");
   });
   element.addEventListener("drop", async (event) => {
-    if (event.target.closest?.(".tree-row")) return;
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest(".tree-row")) return;
     if (!featureOn("sortAndOrder") || !featureOn("sortAndOrder.dragMove")) return;
     event.preventDefault();
     const source = state.dragSource;
@@ -4466,22 +4772,23 @@ function wireRootDrop(element) {
   });
 }
 
-function wireSettingsDialog() {
+function wireSettingsDialog(): void {
   const dialog = els.settingsDialog;
   if (!dialog) return;
 
   dialog.addEventListener("click", (event) => {
-    const toggle = event.target.closest?.("[data-feature-toggle]");
+    if (!(event.target instanceof Element)) return;
+    const toggle = event.target.closest<HTMLButtonElement>("[data-feature-toggle]");
     if (toggle && !toggle.disabled) {
       setFeatureEnabled(
-        toggle.dataset.featureToggle,
+        toggle.dataset.featureToggle!,
         toggle.getAttribute("aria-checked") !== "true"
       );
       return;
     }
-    const expand = event.target.closest?.("[data-feature-expand]");
+    const expand = event.target.closest<HTMLElement>("[data-feature-expand]");
     if (expand) {
-      const groupId = expand.dataset.featureExpand;
+      const groupId = expand.dataset.featureExpand!;
       const controls = $(`feature-controls-${groupId}`);
       const open = !state.expandedFeatureGroups.has(groupId);
       if (open) state.expandedFeatureGroups.add(groupId);
@@ -4490,22 +4797,22 @@ function wireSettingsDialog() {
       expand.setAttribute("aria-expanded", String(open));
       return;
     }
-    const reset = event.target.closest?.("[data-settings-reset]");
+    const reset = event.target.closest<HTMLElement>("[data-settings-reset]");
     if (reset) {
-      resetSettingsSection(reset.dataset.settingsReset);
+      resetSettingsSection(reset.dataset.settingsReset!);
       return;
     }
-    const nav = event.target.closest?.("[data-settings-category]");
+    const nav = event.target.closest<HTMLElement>("[data-settings-category]");
     if (nav) {
-      activateSettingsSection(nav.dataset.settingsCategory);
+      activateSettingsSection(nav.dataset.settingsCategory!);
     }
   });
 
-  els.settingsSearch?.addEventListener("input", () => {
+  els.settingsSearch.addEventListener("input", () => {
     state.settingsQuery = els.settingsSearch.value;
     applySettingsSearch();
   });
-  els.settingsSearch?.addEventListener("keydown", (event) => {
+  els.settingsSearch.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.settingsSearch.value) {
       event.preventDefault();
       event.stopPropagation();
@@ -4517,8 +4824,17 @@ function wireSettingsDialog() {
 
   dialog.addEventListener("input", (event) => {
     const target = event.target;
+    if (
+      !(
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLTextAreaElement
+      )
+    ) {
+      return;
+    }
     if (target === els.settingsSearch) return;
-    if (!target.matches?.("input, select, textarea")) return;
+    if (!target.matches("input, select, textarea")) return;
     if (target.tagName === "SELECT" || target.type === "checkbox") return;
     state.settingsDirty = true;
     state.settingsRevision += 1;
@@ -4527,8 +4843,9 @@ function wireSettingsDialog() {
 
   dialog.addEventListener("change", (event) => {
     const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
     if (target === els.settingsSearch) return;
-    if (!target.matches?.("select, input[type='checkbox']")) return;
+    if (!target.matches("select, input[type='checkbox']")) return;
     state.settingsDirty = true;
     state.settingsRevision += 1;
     saveSettingsNow();
@@ -4537,7 +4854,8 @@ function wireSettingsDialog() {
   // Enter flushes pending text/number edits without closing the dialog.
   dialog.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
-    if (!event.target.matches?.("input:not([type='checkbox']), select")) return;
+    if (!(event.target instanceof HTMLElement)) return;
+    if (!event.target.matches("input:not([type='checkbox']), select")) return;
     event.preventDefault();
     state.settingsDirty = true;
     state.settingsRevision += 1;
@@ -4558,7 +4876,10 @@ function wireSettingsDialog() {
 }
 
 /** Small context menu that only offers colors for a header or a repository row. */
-function openColorContextMenu(event, context) {
+function openColorContextMenu(
+  event: MouseEvent,
+  context: ColorMenuContext
+): void {
   event.preventDefault();
   event.stopPropagation();
   closeColorMenu();
@@ -4575,7 +4896,7 @@ function openColorContextMenu(event, context) {
   els.contextMenu.querySelector("button")?.focus();
 }
 
-function wireEvents() {
+function wireEvents(): void {
   wirePaneResizer();
   wireMenus();
   els.emptyOpen.addEventListener("click", () => {
@@ -4589,8 +4910,12 @@ function wireEvents() {
   els.sidebarToggle?.addEventListener("click", () => {
     applySidebarCollapsed(!state.sidebarCollapsed);
   });
-  for (const control of document.querySelectorAll("[data-home-filter]")) {
-    control.addEventListener("click", () => setHomeFilter(control.dataset.homeFilter));
+  for (const control of document.querySelectorAll<HTMLElement>(
+    "[data-home-filter]"
+  )) {
+    control.addEventListener("click", () =>
+      setHomeFilter(control.dataset.homeFilter ?? "")
+    );
   }
 
   els.maintenanceRescan?.addEventListener("click", rebuildSearchIndex);
@@ -4607,7 +4932,7 @@ function wireEvents() {
   });
   els.updateBannerNotes?.addEventListener("click", async () => {
     const url = state.updateInfo.releaseUrl;
-    if (!isAllowedReleaseUrl(url)) {
+    if (!url || !isAllowedReleaseUrl(url)) {
       setStatus("That update link could not be opened.");
       return;
     }
@@ -4632,14 +4957,30 @@ function wireEvents() {
   wireSettingsDialog();
   els.pinnedTitle.addEventListener("click", () => openLimitDialog("pinned"));
   els.recentTitle.addEventListener("click", () => openLimitDialog("recent"));
-  for (const [element, section] of [
+  const sectionHeaders: [HTMLElement | null, string][] = [
     [els.repositoryLabel, "files"],
     [els.pinnedTitle, "pinned"],
     [els.recentTitle, "recent"],
-    [document.querySelector('.sidebar-nav-item[data-home-filter="all"]'), "files"],
-    [document.querySelector('.sidebar-nav-item[data-home-filter="pinned"]'), "pinned"],
-    [document.querySelector('.sidebar-nav-item[data-home-filter="recent"]'), "recent"],
-  ]) {
+    [
+      document.querySelector<HTMLElement>(
+        '.sidebar-nav-item[data-home-filter="all"]'
+      ),
+      "files",
+    ],
+    [
+      document.querySelector<HTMLElement>(
+        '.sidebar-nav-item[data-home-filter="pinned"]'
+      ),
+      "pinned",
+    ],
+    [
+      document.querySelector<HTMLElement>(
+        '.sidebar-nav-item[data-home-filter="recent"]'
+      ),
+      "recent",
+    ],
+  ];
+  for (const [element, section] of sectionHeaders) {
     element?.addEventListener("contextmenu", (event) =>
       openColorContextMenu(event, { section })
     );
@@ -4647,8 +4988,9 @@ function wireEvents() {
   document
     .getElementById("repositories-section")
     ?.addEventListener("contextmenu", (event) => {
-      if (event.target.closest?.("button")) return;
-      if (!event.target.closest?.(".section-head")) return;
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("button")) return;
+      if (!event.target.closest(".section-head")) return;
       openColorContextMenu(event, { section: "repositories" });
     });
   els.limitForm.addEventListener("submit", (event) => {
@@ -4700,7 +5042,9 @@ function wireEvents() {
     passive: false,
     capture: true,
   });
-  els.saveButton.addEventListener("click", saveCurrent);
+  els.saveButton.addEventListener("click", () => {
+    saveCurrent();
+  });
   els.closeFile.addEventListener("click", () => {
     closeCurrentFile();
   });
@@ -4745,7 +5089,7 @@ function wireEvents() {
 
   els.search.addEventListener("input", () => {
     if (!featureOn("search") || !featureOn("search.toolbar")) return;
-    clearTimeout(state.searchTimer);
+    clearTimeout(state.searchTimer ?? undefined);
     const query = els.search.value.trim();
     if (!query) {
       state.searchSequence += 1;
@@ -4760,10 +5104,10 @@ function wireEvents() {
       hideResults();
       state.editor?.focus();
     } else if (event.key === "Enter") {
-      clearTimeout(state.searchTimer);
+      clearTimeout(state.searchTimer ?? undefined);
       runSearch();
     } else if (event.key === "ArrowDown" && !els.searchResults.hidden) {
-      const first = els.resultsList.querySelector("button");
+      const first = els.resultsList.querySelector<HTMLButtonElement>("button");
       if (first) {
         event.preventDefault();
         first.focus();
@@ -4773,14 +5117,18 @@ function wireEvents() {
   els.closeResults.addEventListener("click", hideResults);
   const searchShell = els.search.closest(".sidebar-search");
   window.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Node)) return;
     if (els.searchResults.hidden) return;
     if (searchShell?.contains(event.target)) return;
     if (els.searchResults.contains(event.target)) return;
     hideResults();
   });
   els.resultsList.addEventListener("keydown", (event) => {
-    const buttons = [...els.resultsList.querySelectorAll("button")];
-    const index = buttons.indexOf(document.activeElement);
+    const buttons = [
+      ...els.resultsList.querySelectorAll<HTMLButtonElement>("button"),
+    ];
+    const active = document.activeElement;
+    const index = active instanceof HTMLButtonElement ? buttons.indexOf(active) : -1;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       buttons[Math.min(buttons.length - 1, index + 1)]?.focus();
@@ -4796,6 +5144,7 @@ function wireEvents() {
   });
 
   window.addEventListener("click", (event) => {
+    if (!(event.target instanceof Node)) return;
     if (!els.contextMenu.hidden && !els.contextMenu.contains(event.target)) {
       hideContextMenu();
     }
@@ -4804,9 +5153,13 @@ function wireEvents() {
     if (event.defaultPrevented) return;
     if (!els.contextMenu.hidden) {
       const items = [
-        ...els.contextMenu.querySelectorAll("button:not(:disabled)"),
+        ...els.contextMenu.querySelectorAll<HTMLButtonElement>(
+          "button:not(:disabled)"
+        ),
       ];
-      const index = items.indexOf(document.activeElement);
+      const active = document.activeElement;
+      const index =
+        active instanceof HTMLButtonElement ? items.indexOf(active) : -1;
       if (event.key === "ArrowDown") {
         event.preventDefault();
         items[Math.min(items.length - 1, index + 1)]?.focus();
@@ -4919,7 +5272,7 @@ function wireEvents() {
   els.windowClose?.addEventListener("click", () => {
     appWindow.close().catch(() => {});
   });
-  const syncMaximized = async () => {
+  const syncMaximized = async (): Promise<void> => {
     try {
       const maximized = await appWindow.isMaximized();
       document.body.classList.toggle("maximized", maximized);
@@ -4947,7 +5300,7 @@ function wireEvents() {
     "NorthWest",
     "SouthEast",
     "SouthWest",
-  ]) {
+  ] as const) {
     const handle = document.createElement("div");
     handle.className = "resize-handle";
     handle.dataset.resize = direction;
@@ -4976,7 +5329,7 @@ function wireEvents() {
   listen("repository-changed", async (event) => {
     if (!state.repository) return;
     if (!featureOn("watcher")) return;
-    const paths = event.payload?.paths ?? [];
+    const paths = watcherPaths(event.payload);
     await loadTree();
     await refreshOrganization();
     if (state.moving || !state.currentFile) return;
@@ -5028,8 +5381,16 @@ function wireEvents() {
   }).catch(() => {});
 }
 
+/** Narrow a Tauri watcher payload to its path list; malformed data means none. */
+function watcherPaths(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object" || !("paths" in payload)) return [];
+  const paths = (payload as { paths?: unknown }).paths;
+  if (!Array.isArray(paths)) return [];
+  return paths.filter((path): path is string => typeof path === "string");
+}
+
 /** Text currently on disk, or null when it cannot be read or is not text. */
-async function readDiskText(path) {
+async function readDiskText(path: string): Promise<string | null> {
   try {
     const file = await api.readFile(path);
     if (file.external) return null;
@@ -5039,12 +5400,12 @@ async function readDiskText(path) {
   }
 }
 
-async function init() {
+async function init(): Promise<void> {
   configureColors({
     getSettings: () => state.settings,
     getRepositories: () => state.recentRepositoryEntries,
     basename,
-    onStatus: (message) => setStatus(message),
+    onStatus: (message: string) => setStatus(message),
     commit: () => {
       if (!els.settingsDialog?.open) syncSettingsFields();
       state.settingsDirty = true;

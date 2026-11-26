@@ -48,6 +48,8 @@ npm run portable
 
 Result: `src-tauri/target/release/bundle/portable/Plainfold_<version>_portable_x64/`
 
+Release archives the folder as `Plainfold_<version>_portable_x64.7z` (7-Zip, ultra) beside a `.sha256` file. `npm run portable` alone only assembles the folder; the CI Windows job creates the archive.
+
 The portable build uses a separate Cargo target directory (`src-tauri/target/portable`), so it does not overwrite the installed release binary or the installers.
 
 Portable test checklist:
@@ -74,10 +76,13 @@ Build:
 ```sh
 npm ci
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri build -- --bundles deb
+npm run tauri build -- --bundles deb,appimage
 ```
 
-Result: `src-tauri/target/release/bundle/deb/plainfold_<version>_amd64.deb`
+Results:
+
+- `src-tauri/target/release/bundle/deb/plainfold_<version>_amd64.deb`
+- `src-tauri/target/release/bundle/appimage/Plainfold_<version>_amd64.AppImage`
 
 Install test:
 
@@ -116,13 +121,31 @@ plainfold
 
 On first launch, accept the Desktop shortcut prompt and confirm `Plainfold.desktop` appears on the Desktop. Decline on a later clean-profile run and confirm the app does not ask again. Confirm the application-menu entry exists. Then repeat the checklist. Remove with `sudo dnf remove plainfold`.
 
+## macOS
+
+Requirements: macOS, Xcode command-line tools, Node, and Rust.
+
+Build:
+
+```sh
+npm ci
+npm run tauri build -- --bundles dmg
+```
+
+Result: `src-tauri/target/release/bundle/dmg/Plainfold_<version>_<arch>.dmg`
+
+The app bundle is unsigned. On first launch macOS Gatekeeper warns; open it with right-click > Open, or `xattr -dr com.apple.quarantine /Applications/Plainfold.app`. Signing and notarization need an Apple Developer ID and are not configured.
+
 ## CI
 
 `.github/workflows/build.yml` runs:
 
-- Windows: tests plus NSIS/MSI bundles and the portable folder.
-- Ubuntu 22.04: tests plus `.deb`.
+- Frontend: `tsc --noEmit` (strict) plus the Node unit tests on Ubuntu 22.04.
+- Windows: tests plus NSIS/MSI bundles, the portable folder, and the `.7z` portable archive with checksum.
+- Ubuntu 22.04: tests plus `.deb` and `.AppImage`.
 - Fedora container: tests, `.rpm` build, and an RPM install check.
+- macOS: tests plus `.dmg` for `aarch64` (macos-15) and `x64` (macos-15-intel).
+- Release: pushing a tag `v<version>` makes the release job collect every artifact, generate `SHA256SUMS.txt`, and publish a GitHub Release with all of them.
 
 Artifacts are uploaded per job. A release is only complete after the Windows, Debian-family, and Fedora-family install tests above have been performed on real machines or VMs.
 

@@ -226,7 +226,7 @@ Project, version, and support
 - Built with Tauri 2.12.4 (Rust) and CodeMirror 6; the front end does not use a
   framework.
 - GitHub repository: https://github.com/krisstianseyer/plainfold
-- Update checker source: src/updater.js (UPDATE_OWNER and UPDATE_REPO).
+- Update checker source: src/updater.ts (UPDATE_OWNER and UPDATE_REPO).
 - Source code, issues, and release notes: use the GitHub repository above.
 - Building from source: run "npm ci", then "npm run build" for the front end,
   "npm run tauri build" for installers, or "npm run portable" for this folder.

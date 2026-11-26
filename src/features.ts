@@ -7,7 +7,43 @@
  * older front end.
  */
 
-export const FEATURE_GROUPS = [
+/** One toggleable control inside a feature group. */
+export interface FeatureControl {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+}
+
+/** A control together with the id of the group that owns it. */
+export interface FeatureControlWithGroup extends FeatureControl {
+  readonly group: string;
+}
+
+/** A feature group: a stable id plus the controls it contains. */
+export interface FeatureGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly controls: readonly FeatureControl[];
+}
+
+/** Settings category a feature group is listed under. */
+export type FeatureCategory = "Browsing" | "Editing" | "Application";
+
+/** Accepted shapes for the disabled-feature id collection. */
+export type DisabledFeatureInput =
+  | ReadonlySet<string>
+  | readonly string[]
+  | null
+  | undefined;
+
+/** Callable id-to-label lookup that also exposes every known label as a property. */
+export interface FeatureLabels {
+  (id: string | null | undefined): string;
+  readonly [id: string]: string;
+}
+
+export const FEATURE_GROUPS: readonly FeatureGroup[] = [
   {
     id: "search",
     label: "Search",
@@ -366,8 +402,8 @@ export const FEATURE_GROUPS = [
   },
 ];
 
-const controlIndex = new Map();
-const groupIndex = new Map();
+const controlIndex = new Map<string, FeatureControlWithGroup>();
+const groupIndex = new Map<string, FeatureGroup>();
 for (const group of FEATURE_GROUPS) {
   groupIndex.set(group.id, group);
   for (const control of group.controls) {
@@ -376,34 +412,45 @@ for (const group of FEATURE_GROUPS) {
 }
 
 /** Flat list of every advanced control, with its group id attached. */
-export const FEATURE_CONTROLS = [...controlIndex.values()];
+export const FEATURE_CONTROLS: readonly FeatureControlWithGroup[] = [
+  ...controlIndex.values(),
+];
 
 /** Group id to title-case label. */
-export const GROUP_LABELS = Object.freeze(
-  Object.fromEntries(FEATURE_GROUPS.map((group) => [group.id, group.label]))
+export const GROUP_LABELS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    FEATURE_GROUPS.map((group): [string, string] => [group.id, group.label])
+  )
 );
 
 /** Every group and control id to its display label. Callable as labels(id). */
-const labelMap = Object.freeze(
+const labelMap: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries([
-    ...FEATURE_GROUPS.map((group) => [group.id, group.label]),
-    ...FEATURE_CONTROLS.map((control) => [control.id, control.label]),
+    ...FEATURE_GROUPS.map((group): [string, string] => [group.id, group.label]),
+    ...FEATURE_CONTROLS.map((control): [string, string] => [
+      control.id,
+      control.label,
+    ]),
   ])
 );
 
-export const labels = Object.assign(
-  (id) => labelMap[id] ?? String(id ?? ""),
+export const labels: FeatureLabels = Object.assign(
+  (id: string | null | undefined) => labelMap[String(id)] ?? String(id ?? ""),
   labelMap
 );
 
 /** Category names in display order for the Features settings view. */
-export const FEATURE_CATEGORY_ORDER = ["Browsing", "Editing", "Application"];
+export const FEATURE_CATEGORY_ORDER: readonly FeatureCategory[] = [
+  "Browsing",
+  "Editing",
+  "Application",
+];
 
 /**
  * Maps every group id to its Features settings category:
  * Browsing, Editing, or Application.
  */
-export const FEATURE_CATEGORIES = Object.freeze({
+export const FEATURE_CATEGORIES: Readonly<Record<string, FeatureCategory>> = Object.freeze({
   search: "Browsing",
   treeFilter: "Browsing",
   pinned: "Browsing",
@@ -427,25 +474,27 @@ export const FEATURE_CATEGORIES = Object.freeze({
 });
 
 /** Display label for any known group or control id, or the id itself. */
-export function labelFor(id) {
-  return labels[id] ?? String(id ?? "");
+export function labelFor(id: string | null | undefined): string {
+  return labels[String(id)] ?? String(id ?? "");
 }
 
 /**
  * The group id that owns a control id. Group ids return themselves. Unknown
  * ids return null.
  */
-export function groupOf(controlId) {
+export function groupOf(controlId: string): string | null {
   if (groupIndex.has(controlId)) return controlId;
   return controlIndex.get(controlId)?.group ?? null;
 }
 
 /** All advanced controls belonging to a group. Unknown groups return []. */
-export function controlsForGroup(groupId) {
+export function controlsForGroup(groupId: string): readonly FeatureControl[] {
   return groupIndex.get(groupId)?.controls ?? [];
 }
 
-function disabledSet(disabledFeatures) {
+function disabledSet(
+  disabledFeatures: DisabledFeatureInput
+): ReadonlySet<string> {
   if (disabledFeatures instanceof Set) return disabledFeatures;
   if (Array.isArray(disabledFeatures)) return new Set(disabledFeatures);
   return new Set();
@@ -455,7 +504,10 @@ function disabledSet(disabledFeatures) {
  * True when neither the id nor its group is disabled. Unknown ids are enabled
  * and never throw.
  */
-export function featureEnabled(id, disabledFeatures) {
+export function featureEnabled(
+  id: string,
+  disabledFeatures: DisabledFeatureInput
+): boolean {
   const disabled = disabledSet(disabledFeatures);
   if (disabled.has(id)) return false;
   const group = groupOf(id);

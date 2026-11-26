@@ -15,7 +15,12 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { Compartment, EditorState, Prec } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  type Extension,
+} from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { css } from "@codemirror/lang-css";
@@ -25,9 +30,9 @@ import { json } from "@codemirror/lang-json";
 import { xml } from "@codemirror/lang-xml";
 import { tags } from "@lezer/highlight";
 
-import { linkAt } from "./link-utils.js";
+import { linkAt } from "./link-utils.ts";
 
-function languageFor(path) {
+function languageFor(path: string | null): Extension {
   const name = (path ?? "").toLowerCase();
   const dot = name.lastIndexOf(".");
   const ext = dot === -1 ? "" : name.slice(dot + 1);
@@ -152,7 +157,7 @@ const whiteEditorTheme = EditorView.theme(
 );
 
 /** Themes that do not name their own editor palette use the default light one. */
-const EDITOR_THEMES = {
+const EDITOR_THEMES: Record<string, Extension> = {
   dark: oneDark,
   nord: oneDark,
   "solarized-dark": oneDark,
@@ -162,8 +167,70 @@ const EDITOR_THEMES = {
   "content-light": [whiteEditorTheme, syntaxHighlighting(whiteSyntax)],
 };
 
-function themeExtension(name) {
+function themeExtension(name: string): Extension {
   return EDITOR_THEMES[name] ?? [];
+}
+
+/** Options accepted by `createEditor`. */
+export interface EditorOptions {
+  /** Element the `EditorView` is mounted into. */
+  parent: Element | DocumentFragment;
+  /** Initial document contents. */
+  doc: string;
+  /** File path, used only to pick a syntax mode from its extension. */
+  path: string | null;
+  /** Render the document as read-only. Defaults to `false`. */
+  readOnly?: boolean;
+  /** Wrap long lines. Defaults to `false`. */
+  wrap?: boolean;
+  /** Indent width in spaces. Defaults to `4`. */
+  tabWidth?: number;
+  /** Theme name resolved through `EDITOR_THEMES`. Defaults to `"light"`. */
+  theme?: string;
+  /** Enable language-aware syntax highlighting. Defaults to `true`. */
+  syntaxHighlighting?: boolean;
+  /** Called whenever the document changes. */
+  onChange?: () => void;
+  /** Called by the `Mod-s` shortcut. */
+  onSave?: () => void;
+  /** Called by the `Mod-f` shortcut. */
+  onSearch?: () => void;
+  /** Called by the `Mod-Shift-f` shortcut. */
+  onFindFiles?: () => void;
+  /** Called with the link target when a ctrl/cmd-click hits a wiki link. */
+  onOpenLink?: (path: string) => void;
+  /** Undo fallback once the editor history is exhausted; true if handled. */
+  onUndo?: () => boolean;
+  /** Redo fallback once the editor history is exhausted; true if handled. */
+  onRedo?: () => boolean;
+}
+
+/** Imperative surface returned by `createEditor`. */
+export interface EditorHandle {
+  view: EditorView;
+  getValue: () => string;
+  focus: () => void;
+  destroy: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+  undo: () => boolean;
+  redo: () => boolean;
+  find: () => void;
+  replace: () => void;
+  copy: () => Promise<boolean>;
+  cut: () => Promise<boolean>;
+  paste: () => Promise<boolean>;
+  deleteSelection: () => boolean;
+  selectAll: () => boolean;
+  setWrap: (enabled: boolean) => void;
+  setTheme: (name: string) => void;
+  setTabWidth: (width: number) => void;
+  setSyntaxHighlighting: (enabled: boolean) => void;
+  setReadOnly: (value: boolean) => void;
+  replaceDoc: (text: string) => void;
+  selection: () => { from: number; to: number; head: number };
+  hasFocus: () => boolean;
+  openAtLine: (line: number | string) => void;
 }
 
 /**
@@ -186,7 +253,7 @@ export function createEditor({
   onOpenLink = () => {},
   onUndo = () => false,
   onRedo = () => false,
-}) {
+}: EditorOptions): EditorHandle {
   const wrapCompartment = new Compartment();
   const themeCompartment = new Compartment();
   const tabCompartment = new Compartment();
@@ -277,12 +344,12 @@ export function createEditor({
 
   const view = new EditorView({ state, parent });
 
-  function selectedText() {
+  function selectedText(): string {
     const { from, to } = view.state.selection.main;
     return view.state.sliceDoc(from, to);
   }
 
-  async function writeClipboard(text) {
+  async function writeClipboard(text: string): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(text);
       return true;
@@ -291,7 +358,7 @@ export function createEditor({
     }
   }
 
-  async function readClipboard() {
+  async function readClipboard(): Promise<string | null> {
     try {
       return await navigator.clipboard.readText();
     } catch {
@@ -299,9 +366,11 @@ export function createEditor({
     }
   }
 
-  function focusSearchField(name) {
+  function focusSearchField(name: string): void {
     requestAnimationFrame(() => {
-      const field = view.dom.querySelector(`.cm-search input[name="${name}"]`);
+      const field = view.dom.querySelector<HTMLInputElement>(
+        `.cm-search input[name="${name}"]`
+      );
       field?.focus();
       field?.select?.();
     });

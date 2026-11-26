@@ -8,7 +8,7 @@ import {
   resolvePathColors,
   resolveRepositoryColors,
   resolveSectionColors,
-} from "../../src/colors.js";
+} from "../../src/colors.ts";
 
 configureColors({ basename: (path) => String(path).split("/").pop() ?? "" });
 

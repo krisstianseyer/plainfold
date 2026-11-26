@@ -1,6 +1,6 @@
 [package]
 name = "plainfold"
-version = "1.7.0"
+version = "1.8.0"
 description = "Plainfold: a plain-text repository editor"
 authors = ["Plainfold"]
 edition = "2021"

@@ -7,7 +7,15 @@
  * they persist through settings.json.
  */
 
-export const COLOR_PALETTE = [
+import type { ColorPair, ColorRule, RepositoryEntry, Settings } from "./types.ts";
+
+/** One named entry in the fixed color palette. */
+export interface PaletteColor {
+  name: string;
+  value: string;
+}
+
+export const COLOR_PALETTE: PaletteColor[] = [
   { name: "Red", value: "#e5484d" },
   { name: "Orange", value: "#f76b15" },
   { name: "Amber", value: "#f2a93b" },
@@ -28,15 +36,37 @@ const SECTION_TARGETS = new Set(["files", "pinned", "recent", "repositories"]);
 const MAX_RULES = 200;
 const MAX_OVERRIDES = 500;
 
-export const SECTION_LABELS = [
+/** One sidebar section header that can carry its own color. */
+export interface SectionLabelEntry {
+  target: string;
+  label: string;
+}
+
+export const SECTION_LABELS: SectionLabelEntry[] = [
   { target: "files", label: "Files" },
   { target: "pinned", label: "Pinned" },
   { target: "recent", label: "Recent" },
   { target: "repositories", label: "Repositories" },
 ];
 
-const config = {
-  getSettings: () => ({}),
+/** Callbacks the shell installs with `configureColors`. */
+export interface ColorsConfig {
+  getSettings: () => Settings;
+  getRepositories: () => RepositoryEntry[];
+  commit: () => void;
+  onChange: () => void;
+  onStatus: (message: string) => void;
+  basename: (path: string) => string;
+  /**
+   * Not installed by `configureColors` (that wires `onStatus`); it stays
+   * optional because `appendColorMenu`'s default parameter reads it from here.
+   */
+  setStatus?: (message: string) => void;
+}
+
+const config: ColorsConfig = {
+  // Placeholder callbacks; configureColors replaces them at startup.
+  getSettings: () => ({} as Settings),
   getRepositories: () => [],
   commit: () => {},
   onChange: () => {},
@@ -44,7 +74,7 @@ const config = {
   basename: (path) => String(path).split(/[\\/]/).pop() ?? "",
 };
 
-export function configureColors(next) {
+export function configureColors(next: Partial<ColorsConfig>): void {
   Object.assign(config, next);
 }
 
@@ -52,19 +82,34 @@ export function configureColors(next) {
 /* Values and persistence                                              */
 /* ------------------------------------------------------------------ */
 
-export function normalizeColor(value) {
+/** A normalized icon/label pair: both channels are always present. */
+export interface NormalizedColorPair {
+  icon: string | null;
+  label: string | null;
+}
+
+/** Which half of a pair a picker is editing. */
+export type ColorChannel = "icon" | "label";
+
+/** A rule target derived from a path. */
+export interface RuleTarget {
+  kind: string;
+  target: string;
+}
+
+export function normalizeColor(value: unknown): string | null {
   const text = typeof value === "string" ? value.trim().toLowerCase() : "";
   return HEX_COLOR.test(text) ? text : null;
 }
 
-export function extensionOf(path) {
+export function extensionOf(path: string): string | null {
   const name = config.basename(path);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
   return name.slice(dot + 1).toLowerCase() || null;
 }
 
-function safeRelativePath(path) {
+function safeRelativePath(path: unknown): string | null {
   const text = typeof path === "string" ? path.trim() : "";
   if (!text || text.length > 1024) return null;
   if (text.startsWith("/") || text.startsWith("\\") || /^[a-z]:/i.test(text)) {
@@ -74,26 +119,30 @@ function safeRelativePath(path) {
   return text;
 }
 
-function normalizePair(pair) {
+function normalizePair(pair: unknown): NormalizedColorPair {
   if (!pair || typeof pair !== "object") return { icon: null, label: null };
+  // Values come from settings.json, so only the object check above is trusted.
+  const source = pair as Record<string, unknown>;
   return {
-    icon: normalizeColor(pair.icon),
-    label: normalizeColor(pair.label),
+    icon: normalizeColor(source.icon),
+    label: normalizeColor(source.label),
   };
 }
 
-function normalizeRule(rule) {
+function normalizeRule(rule: unknown): ColorRule | null {
   if (!rule || typeof rule !== "object") return null;
-  const kind = String(rule.kind ?? "").trim().toLowerCase();
+  // Values come from settings.json, so only the object check above is trusted.
+  const source = rule as Record<string, unknown>;
+  const kind = String(source.kind ?? "").trim().toLowerCase();
   if (!RULE_KINDS.has(kind)) return null;
-  let target = String(rule.target ?? "").trim().toLowerCase();
+  let target = String(source.target ?? "").trim().toLowerCase();
   if (kind === "extension") {
     target = target.replace(/^\.+/, "");
     if (!target || target.length > 24) return null;
   } else if (kind === "section") {
     if (!SECTION_TARGETS.has(target)) return null;
   } else if (kind === "repository") {
-    target = String(rule.target ?? "").trim();
+    target = String(source.target ?? "").trim();
     if (!target || target.length > 1024) return null;
   } else {
     target = "";
@@ -103,10 +152,24 @@ function normalizeRule(rule) {
   return { kind, target, icon: pair.icon, label: pair.label };
 }
 
+/** Unvalidated color settings, as read from settings.json. */
+export interface RawColorSettings {
+  colorIcons?: unknown;
+  colorRules?: unknown;
+  colorOverrides?: Record<string, unknown> | null;
+}
+
+/** The color-related slice of settings after coercion. */
+export interface NormalizedColorSettings {
+  colorIcons: boolean;
+  colorRules: ColorRule[];
+  colorOverrides: Record<string, ColorPair>;
+}
+
 /** Coerce whatever came off disk into the shape the UI expects. */
-export function normalizeColorSettings(values = {}) {
-  const rules = [];
-  const seen = new Set();
+export function normalizeColorSettings(values: RawColorSettings = {}): NormalizedColorSettings {
+  const rules: ColorRule[] = [];
+  const seen = new Set<string>();
   for (const candidate of Array.isArray(values.colorRules) ? values.colorRules : []) {
     const rule = normalizeRule(candidate);
     if (!rule) continue;
@@ -116,8 +179,8 @@ export function normalizeColorSettings(values = {}) {
     rules.push(rule);
     if (rules.length >= MAX_RULES) break;
   }
-  const overrides = {};
-  const source =
+  const overrides: Record<string, ColorPair> = {};
+  const source: Record<string, unknown> =
     values.colorOverrides && typeof values.colorOverrides === "object"
       ? values.colorOverrides
       : {};
@@ -136,7 +199,7 @@ export function normalizeColorSettings(values = {}) {
   };
 }
 
-export const DEFAULT_COLOR_SETTINGS = Object.freeze({
+export const DEFAULT_COLOR_SETTINGS: Readonly<NormalizedColorSettings> = Object.freeze({
   colorIcons: true,
   colorRules: [],
   colorOverrides: {},
@@ -146,7 +209,7 @@ export const DEFAULT_COLOR_SETTINGS = Object.freeze({
 /* Resolution                                                          */
 /* ------------------------------------------------------------------ */
 
-function findRule(settings, kind, target) {
+function findRule(settings: Settings, kind: string, target: string | null): ColorRule | null {
   const rules = settings.colorRules ?? [];
   for (const rule of rules) {
     if (rule.kind === kind && rule.target === (target ?? "")) return rule;
@@ -154,14 +217,18 @@ function findRule(settings, kind, target) {
   return null;
 }
 
-function pairOf(rule) {
+function pairOf(rule: ColorRule | null | undefined): NormalizedColorPair {
   return rule ? { icon: rule.icon ?? null, label: rule.label ?? null } : { icon: null, label: null };
 }
 
-export function resolvePathColors(settings, path, isDir) {
+export function resolvePathColors(
+  settings: Settings | null | undefined,
+  path: string,
+  isDir: boolean
+): NormalizedColorPair {
   if (!settings?.colorIcons) return { icon: null, label: null };
   const override = settings.colorOverrides?.[path];
-  let base = { icon: null, label: null };
+  let base: NormalizedColorPair = { icon: null, label: null };
   if (isDir) {
     base = pairOf(findRule(settings, "folder", ""));
   } else {
@@ -174,18 +241,28 @@ export function resolvePathColors(settings, path, isDir) {
   };
 }
 
-export function resolveSectionColors(settings, target) {
+export function resolveSectionColors(
+  settings: Settings | null | undefined,
+  target: string
+): NormalizedColorPair {
   if (!settings?.colorIcons) return { icon: null, label: null };
   return pairOf(findRule(settings, "section", target));
 }
 
-export function resolveRepositoryColors(settings, path) {
+export function resolveRepositoryColors(
+  settings: Settings | null | undefined,
+  path: string
+): NormalizedColorPair {
   if (!settings?.colorIcons) return { icon: null, label: null };
   return pairOf(findRule(settings, "repository", path));
 }
 
 /** Color a saved-repository row. Repositories have no glyph, so the name shows it. */
-export function decorateRepository(button, name, path) {
+export function decorateRepository(
+  button: Element | null,
+  name: HTMLElement | null,
+  path: string
+): void {
   const colors = resolveRepositoryColors(config.getSettings(), path);
   paintLabel(name, colors.label ?? colors.icon);
 }
@@ -194,20 +271,31 @@ export function decorateRepository(button, name, path) {
 /* Painting                                                            */
 /* ------------------------------------------------------------------ */
 
-export function paintGlyph(element, color) {
+export function paintGlyph(
+  element: HTMLElement | SVGElement | null,
+  color: string | null | undefined
+): void {
   if (!element) return;
   if (color) element.style.setProperty("--pf-icon-color", color);
   else element.style.removeProperty("--pf-icon-color");
 }
 
-export function paintLabel(element, color) {
+export function paintLabel(
+  element: HTMLElement | null,
+  color: string | null | undefined
+): void {
   if (!element) return;
   if (color) element.style.color = color;
   else element.style.removeProperty("color");
 }
 
 /** Tree rows: color the glyph and the name independently. */
-export function decorateTreeEntry(glyph, name, path, isDir) {
+export function decorateTreeEntry(
+  glyph: HTMLElement | SVGElement | null,
+  name: HTMLElement | null,
+  path: string,
+  isDir: boolean
+): NormalizedColorPair {
   const colors = resolvePathColors(config.getSettings(), path, isDir);
   paintGlyph(glyph, colors.icon);
   paintLabel(name, colors.label);
@@ -215,14 +303,22 @@ export function decorateTreeEntry(glyph, name, path, isDir) {
 }
 
 /** Rows without their own glyph (short lists, search hits). */
-export function decorateLabel(element, path, isDir = false) {
+export function decorateLabel(
+  element: HTMLElement | null,
+  path: string,
+  isDir = false
+): NormalizedColorPair {
   const colors = resolvePathColors(config.getSettings(), path, isDir);
   paintLabel(element, colors.label ?? colors.icon);
   return colors;
 }
 
 /** Color a section header's glyph and label. */
-export function paintSection(svg, label, target) {
+export function paintSection(
+  svg: SVGElement | null,
+  label: HTMLElement | null,
+  target: string
+): void {
   const colors = resolveSectionColors(config.getSettings(), target);
   if (svg) {
     if (colors.icon) svg.style.color = colors.icon;
@@ -232,7 +328,7 @@ export function paintSection(svg, label, target) {
 }
 
 /** Apply section colors to every header in the shell. */
-export function applySectionColors(root = document) {
+export function applySectionColors(root: ParentNode = document): void {
   const groups = [
     { target: "files", selectors: ['#repository-label', '.sidebar-nav-item[data-home-filter="all"]'] },
     { target: "pinned", selectors: ['#pinned-title', '.sidebar-nav-item[data-home-filter="pinned"]'] },
@@ -244,7 +340,8 @@ export function applySectionColors(root = document) {
       const element = root.querySelector(selector);
       if (!element) continue;
       const svg = element.querySelector("svg");
-      const label = svg ? element.querySelector("span") : element;
+      // The fallback row is always an HTML element; querySelector only promises Element.
+      const label = svg ? element.querySelector("span") : (element as HTMLElement);
       paintSection(svg, label, group.target);
     }
   }
@@ -254,7 +351,7 @@ export function applySectionColors(root = document) {
 /* Rule editing                                                        */
 /* ------------------------------------------------------------------ */
 
-function settingsObject() {
+function settingsObject(): Settings {
   const settings = config.getSettings();
   if (!Array.isArray(settings.colorRules)) settings.colorRules = [];
   if (!settings.colorOverrides || typeof settings.colorOverrides !== "object") {
@@ -263,7 +360,12 @@ function settingsObject() {
   return settings;
 }
 
-export function upsertRule(kind, target, channel, color) {
+export function upsertRule(
+  kind: string,
+  target: string,
+  channel: ColorChannel,
+  color: string | null
+): void {
   const settings = settingsObject();
   const normalized = normalizeColor(color);
   const key = kind === "extension" ? target.toLowerCase().replace(/^\.+/, "") : target;
@@ -280,7 +382,7 @@ export function upsertRule(kind, target, channel, color) {
   commitColors();
 }
 
-export function removeRule(kind, target) {
+export function removeRule(kind: string, target: string | null): void {
   const settings = settingsObject();
   settings.colorRules = settings.colorRules.filter(
     (item) => !(item.kind === kind && item.target === (target ?? ""))
@@ -288,36 +390,37 @@ export function removeRule(kind, target) {
   commitColors();
 }
 
-export function setOverride(path, channel, color) {
+export function setOverride(path: string, channel: ColorChannel, color: string | null): void {
   const settings = settingsObject();
   const normalized = normalizeColor(color);
   const current = settings.colorOverrides[path] ?? { icon: null, label: null };
-  const next = { ...current, [channel]: normalized };
+  const next: ColorPair = { ...current };
+  next[channel] = normalized;
   if (!next.icon && !next.label) delete settings.colorOverrides[path];
   else settings.colorOverrides[path] = next;
   commitColors();
 }
 
-export function clearOverride(path) {
+export function clearOverride(path: string): void {
   const settings = settingsObject();
   delete settings.colorOverrides[path];
   commitColors();
 }
 
-export function colorTargetForPath(path, isDir) {
+export function colorTargetForPath(path: string, isDir: boolean): RuleTarget {
   if (isDir) return { kind: "folder", target: "" };
   const ext = extensionOf(path);
   if (ext) return { kind: "extension", target: ext };
   return { kind: "other", target: "" };
 }
 
-function pruneRules(settings) {
+function pruneRules(settings: Settings): void {
   settings.colorRules = settings.colorRules.filter(
     (rule) => rule.icon || rule.label
   );
 }
 
-function commitColors() {
+function commitColors(): void {
   config.commit();
   config.onChange();
 }
@@ -326,16 +429,21 @@ function commitColors() {
 /* Color picker popover                                                */
 /* ------------------------------------------------------------------ */
 
-let openPopover = null;
+interface OpenPopover {
+  element: HTMLElement;
+  cleanup: () => void;
+}
+
+let openPopover: OpenPopover | null = null;
 
 /** Popovers live on body; keep their clicks away from the app's global menus. */
-function keepClicksInside(element) {
+function keepClicksInside(element: HTMLElement): void {
   for (const type of ["mousedown", "click", "contextmenu"]) {
     element.addEventListener(type, (event) => event.stopPropagation());
   }
 }
 
-function closePopover() {
+function closePopover(): void {
   if (!openPopover) return;
   const { element, cleanup } = openPopover;
   cleanup();
@@ -343,7 +451,7 @@ function closePopover() {
   openPopover = null;
 }
 
-function positionPopover(element, anchor) {
+function positionPopover(element: HTMLElement, anchor: HTMLElement): void {
   const rect = anchor.getBoundingClientRect();
   element.style.visibility = "hidden";
   // A modal <dialog> paints in the top layer, so a body-level popover would sit
@@ -370,11 +478,21 @@ function positionPopover(element, anchor) {
   element.style.visibility = "";
 }
 
+/** Options for the shared swatch + hex picker. */
+export interface ColorPickerOptions {
+  title?: string;
+  value?: string | null;
+  allowClear?: boolean;
+  allowMatch?: boolean;
+  matchValue?: string | null;
+  onPick: (color: string | null) => void;
+}
+
 /**
  * Shared swatch + hex picker. Returns the created element.
  * options: { title, value, allowClear, allowMatch, onPick(color|null) }
  */
-export function openColorPicker(anchor, options) {
+export function openColorPicker(anchor: HTMLElement, options: ColorPickerOptions): HTMLElement {
   closePopover();
   const { title = "Color", value = null, allowClear = true, allowMatch = false } =
     options;
@@ -441,13 +559,14 @@ export function openColorPicker(anchor, options) {
 
   element.append(heading, grid, hexRow);
 
-  if (allowMatch && options.matchValue) {
+  const matchValue = options.matchValue;
+  if (allowMatch && matchValue) {
     const match = document.createElement("button");
     match.type = "button";
     match.className = "color-popover-action";
     match.textContent = "Match icon color";
     match.addEventListener("click", () => {
-      options.onPick(options.matchValue);
+      options.onPick(matchValue);
       closePopover();
     });
     element.append(match);
@@ -474,10 +593,12 @@ export function openColorPicker(anchor, options) {
       window.removeEventListener("resize", closePopover);
     },
   };
-  const onOutside = (event) => {
-    if (!element.contains(event.target)) closePopover();
+  const onOutside = (event: MouseEvent): void => {
+    // Event targets are always Nodes for mouse events; `contains` only accepts Node.
+    const target = event.target as Node;
+    if (!element.contains(target)) closePopover();
   };
-  const onKey = (event) => {
+  const onKey = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       event.stopPropagation();
       closePopover();
@@ -496,7 +617,7 @@ export function openColorPicker(anchor, options) {
 /* Context menu                                                        */
 /* ------------------------------------------------------------------ */
 
-function menuButton(label, className = "") {
+function menuButton(label: string, className = ""): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.setAttribute("role", "menuitem");
@@ -505,7 +626,10 @@ function menuButton(label, className = "") {
   return button;
 }
 
-function svgSwatchGrid(onPick, activeValue) {
+function svgSwatchGrid(
+  onPick: (color: string) => void,
+  activeValue: string | null | undefined
+): HTMLDivElement {
   const grid = document.createElement("div");
   grid.className = "color-swatch-grid";
   for (const swatch of COLOR_PALETTE) {
@@ -528,28 +652,44 @@ function svgSwatchGrid(onPick, activeValue) {
  * Append a "Color" submenu to the existing context menu.
  * context: { path, isDir, section } where section is "files"|"pinned"|"recent".
  */
-let menuCleanup = null;
+let menuCleanup: (() => void) | null = null;
 
 /** Close any color panel opened from the context menu. */
-export function closeColorMenu() {
+export function closeColorMenu(): void {
   menuCleanup?.();
   menuCleanup = null;
   closePopover();
 }
 
-export function appendColorMenu(menu, context, { setStatus } = config) {
+/** The row a color menu was opened for. Section and repository rows omit `path`. */
+export interface ColorMenuContext {
+  path?: string;
+  isDir?: boolean;
+  repositoryPath?: string | null;
+  repositoryName?: string | null;
+  section?: string | null;
+}
+
+export function appendColorMenu(
+  menu: HTMLElement,
+  context: ColorMenuContext | null,
+  { setStatus }: { setStatus?: (message: string) => void } = config
+): void {
   closeColorMenu();
   const settings = config.getSettings();
   if (!settings.colorIcons || !context) return;
 
+  const path = context.path ?? "";
+  const isDir = context.isDir ?? false;
+  const section = context.section ?? "";
   const repositoryPath = context.repositoryPath ?? null;
-  const isSection = Boolean(context.section);
+  const isSection = Boolean(section);
   const isRepository = Boolean(repositoryPath);
-  const target = isRepository
-    ? { kind: "repository", target: repositoryPath }
+  const target: RuleTarget = isRepository
+    ? { kind: "repository", target: repositoryPath ?? "" }
     : isSection
-      ? { kind: "section", target: context.section }
-      : colorTargetForPath(context.path, context.isDir);
+      ? { kind: "section", target: section }
+      : colorTargetForPath(path, isDir);
   // Only files and folders get a "this one only" scope.
   const scoped = !isSection && !isRepository;
   let onlyThis = false;
@@ -562,17 +702,17 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
   item.append(arrow);
 
   const subject = isSection
-    ? `${SECTION_LABELS.find((entry) => entry.target === context.section)?.label ?? "Section"} header`
+    ? `${SECTION_LABELS.find((entry) => entry.target === section)?.label ?? "Section"} header`
     : isRepository
-      ? context.repositoryName || config.basename(repositoryPath)
+      ? context.repositoryName || config.basename(repositoryPath ?? "")
       : target.kind === "extension"
         ? `.${target.target} files`
         : target.kind === "folder"
           ? "All folders"
           : "Other files";
 
-  let panel = null;
-  let lastPick = null;
+  let panel: HTMLElement | null = null;
+  let lastPick: { channel: ColorChannel; color: string | null } | null = null;
 
   const closePanel = () => {
     if (!panel) return;
@@ -581,64 +721,67 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
     item.classList.remove("is-open");
   };
 
-  function currentColors() {
+  function currentColors(): NormalizedColorPair {
     const active = config.getSettings();
-    if (isSection) return resolveSectionColors(active, context.section);
-    if (isRepository) return resolveRepositoryColors(active, repositoryPath);
+    if (isSection) return resolveSectionColors(active, section);
+    if (isRepository) return resolveRepositoryColors(active, repositoryPath ?? "");
     if (onlyThis) {
-      const override = active.colorOverrides?.[context.path];
+      const override = active.colorOverrides?.[path];
       return {
         icon: override?.icon ?? null,
         label: override?.label ?? null,
       };
     }
-    return resolvePathColors(active, context.path, context.isDir);
+    return resolvePathColors(active, path, isDir);
   }
 
-  function applyColor(channel, color) {
+  function applyColor(channel: ColorChannel, color: string | null): void {
     if (isSection) {
-      upsertRule("section", context.section, channel, color);
+      upsertRule("section", section, channel, color);
     } else if (isRepository) {
-      upsertRule("repository", repositoryPath, channel, color);
+      upsertRule("repository", repositoryPath ?? "", channel, color);
     } else if (onlyThis) {
-      setOverride(context.path, channel, color);
+      setOverride(path, channel, color);
     } else {
       upsertRule(target.kind, target.target, channel, color);
-      setOverride(context.path, channel, null);
+      setOverride(path, channel, null);
     }
     lastPick = { channel, color };
-    setStatus(color ? "Color updated." : "Color cleared.");
+    // Every caller supplies this hook; the config fallback never does.
+    setStatus!(color ? "Color updated." : "Color cleared.");
   }
 
   /** Move the last pick between "all files" and "this one only". */
-  function movePick() {
+  function movePick(): void {
     if (!lastPick || !scoped) return;
     const { channel, color } = lastPick;
     if (onlyThis) {
-      setOverride(context.path, channel, color);
+      setOverride(path, channel, color);
       upsertRule(target.kind, target.target, channel, null);
     } else {
       upsertRule(target.kind, target.target, channel, color);
-      setOverride(context.path, channel, null);
+      setOverride(path, channel, null);
     }
   }
 
-  function renderBody() {
-    panel.textContent = "";
+  function renderBody(): void {
+    const body = panel;
+    if (!body) return;
+    body.textContent = "";
     const colors = currentColors();
 
     const heading = document.createElement("p");
     heading.className = "color-popover-title";
     heading.textContent = scoped && onlyThis
-      ? `${config.basename(context.path)} only`
+      ? `${config.basename(path)} only`
       : subject;
-    panel.append(heading);
+    body.append(heading);
 
     const iconLabel = document.createElement("p");
     iconLabel.className = "color-submenu-label";
     iconLabel.textContent = "Icon";
-    panel.append(iconLabel);
-    panel.append(
+    body.append(iconLabel);
+    body.append(
       svgSwatchGrid((color) => {
         applyColor("icon", color);
         renderBody();
@@ -648,8 +791,8 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
     const labelLabel = document.createElement("p");
     labelLabel.className = "color-submenu-label";
     labelLabel.textContent = "Label";
-    panel.append(labelLabel);
-    panel.append(
+    body.append(labelLabel);
+    body.append(
       svgSwatchGrid((color) => {
         applyColor("label", color);
         renderBody();
@@ -671,7 +814,7 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
         renderBody();
       });
       const text = document.createElement("span");
-      text.textContent = context.isDir ? "This folder only" : "This file only";
+      text.textContent = isDir ? "This folder only" : "This file only";
       scope.append(checkbox, text);
       footer.append(scope);
     }
@@ -694,16 +837,16 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
     reset.className = "color-submenu-reset";
     reset.addEventListener("click", () => {
       if (isSection) {
-        removeRule("section", context.section);
+        removeRule("section", section);
       } else if (isRepository) {
         removeRule("repository", repositoryPath);
       } else if (onlyThis) {
-        clearOverride(context.path);
+        clearOverride(path);
       } else {
         removeRule(target.kind, target.target);
-        clearOverride(context.path);
+        clearOverride(path);
       }
-      setStatus("Color reset.");
+      setStatus!("Color reset.");
       closePanel();
       menu.hidden = true;
     });
@@ -716,13 +859,13 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
       menu.hidden = true;
     });
     footer.append(done);
-    panel.append(footer);
-    positionPopover(panel, item);
+    body.append(footer);
+    positionPopover(body, item);
   }
 
   const openPanel = () => {
     closePanel();
-    onlyThis = scoped ? Boolean(settings.colorOverrides?.[context.path]) : false;
+    onlyThis = scoped ? Boolean(settings.colorOverrides?.[path]) : false;
     panel = document.createElement("div");
     panel.className = "context-submenu color-submenu";
     panel.setAttribute("role", "menu");
@@ -738,9 +881,11 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
   });
   menu.append(item);
 
-  const onOutside = (event) => {
+  const onOutside = (event: MouseEvent): void => {
     if (!panel) return;
-    if (panel.contains(event.target) || item.contains(event.target)) return;
+    // Event targets are always Nodes for mouse events; `contains` only accepts Node.
+    const node = event.target as Node;
+    if (panel.contains(node) || item.contains(node)) return;
     closePanel();
   };
   document.addEventListener("mousedown", onOutside, true);
@@ -754,7 +899,14 @@ export function appendColorMenu(menu, context, { setStatus } = config) {
 /* Settings page                                                       */
 /* ------------------------------------------------------------------ */
 
-function swatchButton({ value, label, onPick, className = "color-swatch" }) {
+interface SwatchButtonOptions {
+  value?: string | null;
+  label: string;
+  onPick: (button: HTMLButtonElement) => void;
+  className?: string;
+}
+
+function swatchButton({ value, label, onPick, className = "color-swatch" }: SwatchButtonOptions): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
@@ -770,7 +922,17 @@ function swatchButton({ value, label, onPick, className = "color-swatch" }) {
   return button;
 }
 
-function ruleRow({ title, subtitle, colors, onIcon, onLabel, onRemove, onReset }) {
+interface RuleRowOptions {
+  title?: string;
+  subtitle?: string;
+  colors: ColorPair;
+  onIcon: (button: HTMLButtonElement) => void;
+  onLabel: (button: HTMLButtonElement) => void;
+  onRemove?: (() => void) | null;
+  onReset?: (() => void) | null;
+}
+
+function ruleRow({ title, subtitle, colors, onIcon, onLabel, onRemove, onReset }: RuleRowOptions): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "color-rule";
   const text = document.createElement("div");
@@ -819,7 +981,11 @@ function ruleRow({ title, subtitle, colors, onIcon, onLabel, onRemove, onReset }
   return row;
 }
 
-function field(label, help, content) {
+function field(
+  label: string,
+  help: string | undefined,
+  content: (wrapper: HTMLDivElement) => void
+): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.className = "settings-field";
   wrapper.dataset.settingsLabel = label;
@@ -828,14 +994,22 @@ function field(label, help, content) {
   return wrapper;
 }
 
-export function renderColorSettings(container, { refresh } = {}) {
+export interface RenderColorSettingsOptions {
+  refresh?: unknown;
+}
+
+export function renderColorSettings(
+  container: HTMLElement | null,
+  { refresh }: RenderColorSettingsOptions = {}
+): void {
   if (!container) return;
+  const root = container;
   const settings = settingsObject();
   const rerender = () => {
-    renderColorSettings(container, { refresh });
+    renderColorSettings(root, { refresh });
     config.onChange();
   };
-  container.textContent = "";
+  root.textContent = "";
   const head = document.createElement("div");
   head.className = "settings-panel-head";
   const title = document.createElement("h3");
@@ -853,15 +1027,15 @@ export function renderColorSettings(container, { refresh } = {}) {
     rerender();
   });
   head.append(title, reset);
-  container.append(head);
+  root.append(head);
 
   const intro = document.createElement("p");
   intro.className = "settings-help color-intro";
   intro.textContent =
     "Give folders, file types, and sidebar sections their own color. Labels stay neutral until you color them.";
-  container.append(intro);
+  root.append(intro);
 
-  container.append(
+  root.append(
     field(
       "Colored icons",
       "Turn the whole feature on or off. Colors apply to the sidebar, file header, and search results.",
@@ -923,7 +1097,7 @@ export function renderColorSettings(container, { refresh } = {}) {
       })
     );
   }
-  container.append(sections);
+  root.append(sections);
 
   const repositories = (config.getRepositories() ?? []).filter(
     (entry) => entry && entry.path
@@ -970,7 +1144,7 @@ export function renderColorSettings(container, { refresh } = {}) {
         })
       );
     }
-    container.append(repoGroup);
+    root.append(repoGroup);
   }
   const kinds = document.createElement("fieldset");
   kinds.className = "settings-group color-group";
@@ -1016,7 +1190,7 @@ export function renderColorSettings(container, { refresh } = {}) {
       })
     );
   }
-  container.append(kinds);
+  root.append(kinds);
 
   const extensions = document.createElement("fieldset");
   extensions.className = "settings-group color-group";
@@ -1031,6 +1205,8 @@ export function renderColorSettings(container, { refresh } = {}) {
     extensions.append(empty);
   }
   for (const rule of extRules) {
+    // Extension rules always carry a target (normalizeRule guarantees it).
+    const extTarget = rule.target ?? "";
     const row = ruleRow({
       title: rule.target ? `.${rule.target}` : "",
       colors: pairOf(rule),
@@ -1039,7 +1215,7 @@ export function renderColorSettings(container, { refresh } = {}) {
           title: `.${rule.target} icon`,
           value: rule.icon,
           onPick: (color) => {
-            upsertRule("extension", rule.target, "icon", color);
+            upsertRule("extension", extTarget, "icon", color);
             rerender();
           },
         }),
@@ -1050,19 +1226,19 @@ export function renderColorSettings(container, { refresh } = {}) {
           allowMatch: true,
           matchValue: rule.icon,
           onPick: (color) => {
-            upsertRule("extension", rule.target, "label", color);
+            upsertRule("extension", extTarget, "label", color);
             rerender();
           },
         }),
       onRemove: () => {
-        removeRule("extension", rule.target);
+        removeRule("extension", extTarget);
         rerender();
       },
     });
     const extInput = document.createElement("input");
     extInput.type = "text";
     extInput.className = "color-rule-ext";
-    extInput.value = rule.target;
+    extInput.value = rule.target ?? "";
     extInput.spellcheck = false;
     extInput.placeholder = "ext";
     extInput.setAttribute("aria-label", `Extension for ${rule.target || "new file type"}`);
@@ -1076,7 +1252,7 @@ export function renderColorSettings(container, { refresh } = {}) {
       const next = extInput.value.trim().toLowerCase().replace(/^\.+/, "");
       if (!next) {
         settings.colorRules = settings.colorRules.filter((item) => item !== rule);
-        renderColorSettings(container, { refresh });
+        renderColorSettings(root, { refresh });
         return;
       }
       if (next === rule.target) return;
@@ -1090,7 +1266,8 @@ export function renderColorSettings(container, { refresh } = {}) {
       commitColors();
       rerender();
     });
-    row.querySelector(".color-rule-text").prepend(extInput);
+    // The row builder always creates this div; querySelector only promises Element.
+    row.querySelector(".color-rule-text")?.prepend(extInput);
     extensions.append(row);
   }
   const addRow = document.createElement("div");
@@ -1102,18 +1279,20 @@ export function renderColorSettings(container, { refresh } = {}) {
   addLabel(addButton);
   extensions.append(addRow);
   addRow.append(addButton);
-  container.append(extensions);
+  root.append(extensions);
 
-  function addLabel(button) {
+  function addLabel(button: HTMLButtonElement): void {
     button.addEventListener("click", () => {
       settings.colorRules.push({ kind: "extension", target: "", icon: null, label: null });
-      renderColorSettings(container, { refresh });
-      const inputs = container.querySelectorAll(".color-rule-ext");
+      renderColorSettings(root, { refresh });
+      const inputs = root.querySelectorAll<HTMLInputElement>(".color-rule-ext");
       inputs[inputs.length - 1]?.focus();
     });
   }
 
-  const overrides = Object.entries(settings.colorOverrides ?? {});
+  const overrides: Array<[string, ColorPair]> = Object.entries(
+    settings.colorOverrides ?? {}
+  );
   if (overrides.length) {
     const list = document.createElement("fieldset");
     list.className = "settings-group color-group";
@@ -1153,7 +1332,7 @@ export function renderColorSettings(container, { refresh } = {}) {
         })
       );
     }
-    container.append(list);
+    root.append(list);
   }
 
   if (settings.colorRules.length || overrides.length) {
@@ -1170,6 +1349,6 @@ export function renderColorSettings(container, { refresh } = {}) {
       rerender();
     });
     clearAll.append(clearButton);
-    container.append(clearAll);
+    root.append(clearAll);
   }
 }

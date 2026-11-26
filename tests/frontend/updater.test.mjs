@@ -15,7 +15,7 @@ import {
   recordUpdateCheck,
   updateInactiveStatus,
   updateSourceConfigured,
-} from "../../src/updater.js";
+} from "../../src/updater.ts";
 
 const OWNER = "octocat";
 const REPO = "plainfold";
