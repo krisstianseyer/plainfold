@@ -262,7 +262,10 @@ mod tests {
     #[test]
     fn display_path_drops_verbatim_prefix() {
         let shown = display_path(Path::new(r"\\?\C:\Users\me\Notes"));
+        assert!(shown.ends_with("Notes"));
+        // Only Windows has verbatim prefixes; elsewhere the input is one
+        // relative path and the prefix assertion would be meaningless.
+        #[cfg(windows)]
         assert!(!shown.contains(r"\\?\"));
-        assert!(shown.ends_with(r"Notes"));
     }
 }
