@@ -54,17 +54,18 @@ Desktop shortcuts:
 
 ## Development
 
-Requirements: Node 20+ (tested with 24), Rust 1.77+ (tested with 1.96), and the Tauri 2 platform prerequisites for your OS.
+Requirements: Node 22.18+ (tested with 24; 22.18 is the first release that runs the TypeScript sources directly via type stripping), Rust 1.77+ (tested with 1.96), and the Tauri 2 platform prerequisites for your OS.
 
 ```sh
 npm install
 npm run dev          # front end only, in a browser (backend calls will fail)
 npm run tauri dev    # full desktop app
+npm run typecheck    # tsc --noEmit, strict
 ```
 
 Tests:
 
-Front-end tests are plain Node test files. Run each file directly; Node's test runner spawns child processes, which some sandboxed environments block.
+Front-end tests are plain Node test files that import the `.ts` modules directly. Run each file directly; Node's test runner spawns child processes, which some sandboxed environments block.
 
 ```sh
 node tests/frontend/tree-utils.test.mjs
@@ -72,7 +73,7 @@ node tests/frontend/link-utils.test.mjs   # repeat for each tests/frontend/*.tes
 
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --all-targets -- -D warnings
-npm run build                             # production front-end bundle
+npm run build                             # type-check, then production front-end bundle
 ```
 
 `npm test` runs the same files through Node's test runner. Use it where the environment allows child processes.
